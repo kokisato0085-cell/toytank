@@ -4,6 +4,7 @@
 import { TILE } from "../stage/types";
 import type { StageData } from "../stage/types";
 import { isSolidCell } from "./physics";
+import { BULLET_RADIUS } from "./constants";
 
 export interface Bullet {
   x: number;
@@ -57,4 +58,12 @@ export function advanceBullet(stage: StageData, b: Bullet, dt: number): boolean 
   b.y = ny;
   b.age += dt;
   return true;
+}
+
+// 2発の弾が接触しているか（両半径の和以内）。
+export function bulletsCollide(a: Bullet, b: Bullet): boolean {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const d = BULLET_RADIUS * 2;
+  return dx * dx + dy * dy < d * d;
 }

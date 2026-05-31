@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createEmptyStage, fillBorderSteel } from "../stage/edit";
 import { TILE } from "../stage/types";
-import { advanceBullet, type Bullet } from "./bullet";
+import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 
 // 5×4・外周鋼。内部床 col1..3 / row1..2、cell=64。
 function freshStage() {
@@ -41,5 +41,12 @@ describe("advanceBullet", () => {
     const b = bullet({ x: 160, y: 160, vx: 600, vy: 0, bounces: 1 }); // col2→col3へ
     expect(advanceBullet(s, b, 0.1)).toBe(false);
     expect(s.tiles[2][3]).toBe(TILE.FLOOR); // 破壊された
+  });
+});
+
+describe("bulletsCollide", () => {
+  it("近接していれば衝突、離れていれば非衝突", () => {
+    expect(bulletsCollide(bullet({ x: 100, y: 100 }), bullet({ x: 105, y: 100 }))).toBe(true);
+    expect(bulletsCollide(bullet({ x: 100, y: 100 }), bullet({ x: 140, y: 100 }))).toBe(false);
   });
 });

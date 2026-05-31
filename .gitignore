@@ -1,0 +1,16 @@
+# ローカル専用ルール（GitHubに上げない）
+DEV_RULES.local.md
+
+# 依存・ビルド成果物
+node_modules/
+dist/
+build/
+coverage/
+
+# 環境変数
+.env
+.env.local
+
+# OS / エディタ
+.DS_Store
+*.log

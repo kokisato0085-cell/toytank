@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createEmptyStage, fillBorderSteel } from "../stage/edit";
-import { circleHitsSolid, isSolidCell, resolveMove } from "./physics";
+import { circleHitsSolid, isSolidCell, resolveMove, slide } from "./physics";
 
 // 5×4・外周鋼。内部の床セルは col1..3 / row1..2、cell=64。
 // セル中心 (col,row) のワールド座標 = ((col+0.5)*64, (row+0.5)*64)
@@ -41,5 +41,15 @@ describe("resolveMove", () => {
     const res = resolveMove(stage, 160, 160, 120, 260, R);
     expect(res.x).toBe(120);
     expect(res.y).toBe(160);
+  });
+});
+
+describe("slide（汎用：任意の blocked 判定で壁ずり）", () => {
+  // x>=150 を塞がれた領域とする。
+  const blocked = (px: number, _py: number) => px >= 150;
+  it("塞がれたX軸は止まり、Y軸へは進む", () => {
+    const res = slide(100, 100, 160, 140, blocked);
+    expect(res.x).toBe(100); // Xは塞がれ据え置き
+    expect(res.y).toBe(140); // Yは通る
   });
 });

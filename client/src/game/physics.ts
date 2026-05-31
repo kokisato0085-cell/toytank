@@ -39,8 +39,23 @@ export function circleHitsSolid(stage: StageData, x: number, y: number, r: numbe
   return false;
 }
 
-// (x,y) から (nx,ny) への移動を、壁にめり込まないよう軸別に解決する（壁ずり）。
-// X を先に試し、次に（解決済みXのまま）Y を試す。
+// (x,y) から (nx,ny) への移動を軸別に解決する（壁ずり）。
+// blocked(px,py) が「その中心位置が塞がれているか」を返す。X を先に、次に解決済みXのまま Y を試す。
+export function slide(
+  x: number,
+  y: number,
+  nx: number,
+  ny: number,
+  blocked: (px: number, py: number) => boolean,
+): { x: number; y: number } {
+  let rx = nx;
+  if (blocked(rx, y)) rx = x;
+  let ry = ny;
+  if (blocked(rx, ry)) ry = y;
+  return { x: rx, y: ry };
+}
+
+// 壁（ソリッドセル・場外）に対する移動解決。
 export function resolveMove(
   stage: StageData,
   x: number,
@@ -49,9 +64,5 @@ export function resolveMove(
   ny: number,
   r: number,
 ): { x: number; y: number } {
-  let rx = nx;
-  if (circleHitsSolid(stage, rx, y, r)) rx = x;
-  let ry = ny;
-  if (circleHitsSolid(stage, rx, ry, r)) ry = y;
-  return { x: rx, y: ry };
+  return slide(x, y, nx, ny, (px, py) => circleHitsSolid(stage, px, py, r));
 }

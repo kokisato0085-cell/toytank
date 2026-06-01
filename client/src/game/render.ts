@@ -39,9 +39,18 @@ export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const v = stage.tiles[r][c];
-      ctx.fillStyle =
-        v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : v === TILE.HOLE ? COLORS.hole : COLORS.floor;
-      ctx.fillRect(c * cell, r * cell, cell, cell);
+      if (v === TILE.HOLE) {
+        // 穴：床の上にグリッド内最大の円（角は床色のまま）。
+        ctx.fillStyle = COLORS.floor;
+        ctx.fillRect(c * cell, r * cell, cell, cell);
+        ctx.fillStyle = COLORS.hole;
+        ctx.beginPath();
+        ctx.arc((c + 0.5) * cell, (r + 0.5) * cell, cell / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : COLORS.floor;
+        ctx.fillRect(c * cell, r * cell, cell, cell);
+      }
     }
   }
   ctx.strokeStyle = COLORS.line;

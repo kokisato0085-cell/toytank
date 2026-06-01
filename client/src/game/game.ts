@@ -54,6 +54,20 @@ function rotate(v: { x: number; y: number }, ang: number): { x: number; y: numbe
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
+// HUD/区切り画面用の小さな戦車アイコン（デバイス座標）。砲塔は上向き。
+function drawTankIcon(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#222";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, y - 14);
+  ctx.stroke();
+}
+
 // ステージ定義から敵エンティティを生成（初期位置 hx/hy も保持）。
 function makeEnemies(stage: StageData): Enemy[] {
   return stage.enemies.map((e) => {
@@ -445,37 +459,37 @@ export class Game {
     this.drawHud(ctx);
   }
 
-  // 残機・敵数・状態（デバイス座標で重ねる）。
+  // 残機（自機アイコン×数）・敵数・ステージ番号・状態（デバイス座標で重ねる）。
   private drawHud(ctx: CanvasRenderingContext2D): void {
+    const iy = 22;
+    drawTankIcon(ctx, 20, iy, COLORS.p1);
     ctx.fillStyle = "#222";
-    ctx.font = "16px sans-serif";
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(`残機 ${this.lives}　敵 ${this.enemies.length}`, 10, 8);
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillText(`× ${this.lives}`, 38, iy);
+    ctx.font = "14px sans-serif";
+    ctx.fillText(`敵 ${this.enemies.length}`, 92, iy);
+    if (this.stageLabel) {
+      ctx.textAlign = "right";
+      ctx.font = "bold 16px sans-serif";
+      ctx.fillText(this.stageLabel, ctx.canvas.width - 10, iy);
+    }
 
     if (this.state === "playing") return;
     if (this.state === "intro") {
       this.drawIntro(ctx);
       return;
     }
+    if (this.state === "respawning") {
+      this.drawMiss(ctx);
+      return;
+    }
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
-    let title: string;
-    let color: string;
-    let sub: string;
-    if (this.state === "cleared") {
-      title = "CLEAR!";
-      color = "#7CFC9B";
-      sub = "R キー / リスタートボタンで再挑戦";
-    } else if (this.state === "gameover") {
-      title = "GAME OVER";
-      color = "#ff8080";
-      sub = "R キー / リスタートボタンで再挑戦";
-    } else {
-      title = `ミス！  残機 ×${this.lives}`;
-      color = "#ffd23a";
-      sub = "まもなく再開…";
-    }
+    const title = this.state === "cleared" ? "CLEAR!" : "GAME OVER";
+    const color = this.state === "cleared" ? "#7CFC9B" : "#ff8080";
+    const sub = "R キー / リスタートボタンで再挑戦";
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, cy - 48, ctx.canvas.width, 96);
     ctx.fillStyle = color;
@@ -486,6 +500,31 @@ export class Game {
     ctx.fillStyle = "#fff";
     ctx.font = "16px sans-serif";
     ctx.fillText(sub, cx, cy + 26);
+  }
+
+  // 被弾の区切り画面：「ミス！」＋ 残機（自機アイコン×数）。
+  private drawMiss(ctx: CanvasRenderingContext2D): void {
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height / 2;
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(0, cy - 56, ctx.canvas.width, 112);
+
+    ctx.fillStyle = "#ffd23a";
+    ctx.font = "bold 34px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("ミス！", cx, cy - 20);
+
+    drawTankIcon(ctx, cx - 26, cy + 18, COLORS.p1);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "left";
+    ctx.font = "20px sans-serif";
+    ctx.fillText(`× ${this.lives}`, cx - 8, cy + 18);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ccc";
+    ctx.font = "13px sans-serif";
+    ctx.fillText("まもなく再開…", cx, cy + 46);
   }
 
   // ステージ開始の区切り画面：ステージ名・出現する敵（色×数）・残機。
@@ -521,13 +560,17 @@ export class Game {
       x += ew;
     }
 
-    ctx.textAlign = "center";
+    // 残機（自機アイコン×数）
+    drawTankIcon(ctx, cx - 26, cy + 52, COLORS.p1);
     ctx.fillStyle = "#fff";
-    ctx.font = "18px sans-serif";
-    ctx.fillText(`残機 ×${this.lives}`, cx, cy + 52);
+    ctx.textAlign = "left";
+    ctx.font = "20px sans-serif";
+    ctx.fillText(`× ${this.lives}`, cx - 8, cy + 52);
+
+    ctx.textAlign = "center";
     ctx.fillStyle = "#ccc";
     ctx.font = "14px sans-serif";
-    ctx.fillText("まもなく開始…", cx, cy + 82);
+    ctx.fillText("まもなく開始…", cx, cy + 84);
   }
 
   // 直進の照準線（反射は描かない）。最初の壁／場外／敵に当たる位置まで。

@@ -38,6 +38,8 @@ type GameState = "intro" | "playing" | "respawning" | "cleared" | "gameover";
 interface Enemy {
   x: number;
   y: number;
+  hx: number; // 初期位置（リスポーン時に戻す）
+  hy: number;
   pattern: EnemyPattern;
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
@@ -50,6 +52,14 @@ function rotate(v: { x: number; y: number }, ang: number): { x: number; y: numbe
   const c = Math.cos(ang);
   const s = Math.sin(ang);
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+}
+
+// ステージ定義から敵エンティティを生成（初期位置 hx/hy も保持）。
+function makeEnemies(stage: StageData): Enemy[] {
+  return stage.enemies.map((e) => {
+    const c = cellCenter(stage, e);
+    return { x: c.x, y: c.y, hx: c.x, hy: c.y, pattern: e.pattern, cd: 0, facing: Math.PI / 2 };
+  });
 }
 
 export class Game {
@@ -84,7 +94,7 @@ export class Game {
     this.input = new Input(canvas);
     this.spawn = cellCenter(stage, stage.players[0]);
     this.pos = { ...this.spawn };
-    this.enemies = stage.enemies.map((e) => ({ ...cellCenter(stage, e), pattern: e.pattern, cd: 0, facing: Math.PI / 2 }));
+    this.enemies = makeEnemies(stage);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
   }
@@ -366,24 +376,25 @@ export class Game {
     this.interTimer = RESPAWN_PAUSE;
   }
 
-  // 自機だけリスポーンする（敵・タイルは維持）。被弾→再開で使う。
+  // 自機だけリスポーンする。倒した敵は復活させないが、生き残った敵は定位置(home)へ戻す。
   private respawnPlayer(): void {
     this.pos = { ...this.spawn };
     this.facing = -Math.PI / 2;
     this.bullets = [];
     this.mines = [];
     this.explosions = [];
+    for (const e of this.enemies) {
+      e.x = e.hx;
+      e.y = e.hy;
+      e.cd = 0;
+      e.facing = Math.PI / 2;
+    }
   }
 
   // ステージを初期状態に戻す（壁・敵・地雷・弾・自機位置）。残機は変更しない。
   private resetStage(): void {
     this.stage.tiles = this.initialTiles.map((row) => [...row]);
-    this.enemies = this.stage.enemies.map((e) => ({
-      ...cellCenter(this.stage, e),
-      pattern: e.pattern,
-      cd: 0,
-      facing: Math.PI / 2,
-    }));
+    this.enemies = makeEnemies(this.stage);
     this.bullets = [];
     this.mines = [];
     this.explosions = [];

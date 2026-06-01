@@ -94,6 +94,7 @@ export class Game {
   private state: GameState = "playing";
   private interTimer = 0; // 区切りポーズ／開始画面の残り秒
   private stageLabel = ""; // 「ステージN」表示用
+  private kills: Record<EnemyPattern, number> = { stationary: 0, mover: 0 }; // 種類別の撃破数（リザルト用）
   private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
   // 進行制御のコールバック（キャンペーン用）。クリア／ゲームオーバー遷移時に1回呼ぶ。
@@ -129,7 +130,10 @@ export class Game {
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
     this.fit();
-    if (resetLives) this.lives = SOLO_LIVES;
+    if (resetLives) {
+      this.lives = SOLO_LIVES;
+      this.kills = { stationary: 0, mover: 0 }; // 新しいランの開始
+    }
     this.resetStage();
     this.state = "playing";
   }
@@ -203,6 +207,7 @@ export class Game {
       if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
       const ei = this.enemies.findIndex((e) => this.near(b.x, b.y, e.x, e.y));
       if (ei >= 0) {
+        this.kills[this.enemies[ei].pattern]++; // 撃破数を集計
         this.enemies.splice(ei, 1); // 敵を破壊（FF：弾は所有者を問わず当たる）
         continue;
       }
@@ -287,7 +292,13 @@ export class Game {
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
       if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
-      this.enemies = this.enemies.filter((e) => !this.inBlast(m.x, m.y, e.x, e.y));
+      this.enemies = this.enemies.filter((e) => {
+        if (this.inBlast(m.x, m.y, e.x, e.y)) {
+          this.kills[e.pattern]++; // 撃破数を集計
+          return false;
+        }
+        return true;
+      });
       this.mines.forEach((o, j) => {
         if (!det.has(j) && this.inBlast(m.x, m.y, o.x, o.y)) {
           det.add(j);
@@ -419,6 +430,7 @@ export class Game {
   // 最初からやり直す（残機リセット）。クリア／ゲームオーバー後に呼ぶ。
   restart(): void {
     this.lives = SOLO_LIVES;
+    this.kills = { stationary: 0, mover: 0 };
     this.resetStage();
     this.state = "playing";
   }
@@ -485,21 +497,61 @@ export class Game {
       this.drawMiss(ctx);
       return;
     }
+    if (this.state === "gameover") {
+      this.drawResult(ctx);
+      return;
+    }
+    // cleared
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
-    const title = this.state === "cleared" ? "CLEAR!" : "GAME OVER";
-    const color = this.state === "cleared" ? "#7CFC9B" : "#ff8080";
-    const sub = "R キー / リスタートボタンで再挑戦";
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, cy - 48, ctx.canvas.width, 96);
-    ctx.fillStyle = color;
+    ctx.fillStyle = "#7CFC9B";
     ctx.font = "bold 36px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(title, cx, cy - 10);
+    ctx.fillText("CLEAR!", cx, cy - 10);
     ctx.fillStyle = "#fff";
     ctx.font = "16px sans-serif";
-    ctx.fillText(sub, cx, cy + 26);
+    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + 26);
+  }
+
+  // ゲームオーバー時のリザルト：色別の戦車アイコン×撃破数。
+  private drawResult(ctx: CanvasRenderingContext2D): void {
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height / 2;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    ctx.fillStyle = "#ff8080";
+    ctx.font = "bold 40px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("GAME OVER", cx, cy - 78);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "18px sans-serif";
+    ctx.fillText("撃破数", cx, cy - 34);
+
+    const entries: { color: string; count: number }[] = [
+      { color: COLORS.stationary, count: this.kills.stationary },
+      { color: COLORS.mover, count: this.kills.mover },
+    ];
+    const ew = 120;
+    let x = cx - (entries.length * ew) / 2 + ew / 2;
+    ctx.font = "24px sans-serif";
+    for (const e of entries) {
+      drawTankIcon(ctx, x - 24, cy + 8, e.color);
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "left";
+      ctx.fillText(`× ${e.count}`, x - 4, cy + 8);
+      x += ew;
+    }
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + 70);
   }
 
   // 被弾の区切り画面：「ミス！」＋ 残機（自機アイコン×数）。

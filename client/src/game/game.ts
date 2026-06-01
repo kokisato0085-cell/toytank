@@ -7,10 +7,12 @@ import type { EnemyPattern, StageData } from "../stage/types";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
 import { circleHitsSolid, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
+import { blastReaches, computeAimDir } from "./ai";
 import { Input } from "./input";
 import {
   BULLET_RADIUS,
   BULLET_SPEED,
+  ENEMY_COOLDOWN,
   EXPLOSION_LIFE,
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
@@ -19,6 +21,7 @@ import {
   MINE_BLAST_LIFE,
   MINE_FUSE,
   MINE_RADIUS,
+  MOVER_SPEED,
   SELF_GRACE,
   STEP,
   TANK_RADIUS,
@@ -29,6 +32,8 @@ interface Enemy {
   x: number;
   y: number;
   pattern: EnemyPattern;
+  cd: number; // 発射クールダウン残り(秒)
+  facing: number; // 砲塔の向き
 }
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
@@ -62,7 +67,7 @@ export class Game {
     this.input = new Input(canvas);
     this.spawn = cellCenter(stage, stage.players[0]);
     this.pos = { ...this.spawn };
-    this.enemies = stage.enemies.map((e) => ({ ...cellCenter(stage, e), pattern: e.pattern }));
+    this.enemies = stage.enemies.map((e) => ({ ...cellCenter(stage, e), pattern: e.pattern, cd: 0, facing: Math.PI / 2 }));
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
   }
 
@@ -105,6 +110,9 @@ export class Game {
       const dir = f.dir ?? { x: Math.cos(this.facing), y: Math.sin(this.facing) };
       this.fire(dir);
     }
+
+    // 敵AI（移動＋射撃）
+    this.updateEnemies(dt);
 
     // 弾の更新と命中
     const alive: Bullet[] = [];
@@ -188,10 +196,10 @@ export class Game {
       const m = this.mines[queue.pop()!];
       this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
       this.destroyBricksNear(m.x, m.y, this.blastR);
-      if (this.dist(m.x, m.y, this.pos.x, this.pos.y) < this.blastR) playerHit = true;
-      this.enemies = this.enemies.filter((e) => this.dist(m.x, m.y, e.x, e.y) >= this.blastR);
+      if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
+      this.enemies = this.enemies.filter((e) => !this.inBlast(m.x, m.y, e.x, e.y));
       this.mines.forEach((o, j) => {
-        if (!det.has(j) && this.dist(m.x, m.y, o.x, o.y) < this.blastR) {
+        if (!det.has(j) && this.inBlast(m.x, m.y, o.x, o.y)) {
           det.add(j);
           queue.push(j);
         }
@@ -201,6 +209,11 @@ export class Game {
     if (playerHit) this.respawn();
   }
 
+  // 爆心(mx,my)から(tx,ty)が爆風範囲内かつ壁に遮られていないか。
+  private inBlast(mx: number, my: number, tx: number, ty: number): boolean {
+    return this.dist(mx, my, tx, ty) < this.blastR && blastReaches(this.stage, mx, my, tx, ty);
+  }
+
   private destroyBricksNear(x: number, y: number, r: number): void {
     const { cols, rows, cell } = this.stage.grid;
     for (let row = 0; row < rows; row++) {
@@ -208,7 +221,9 @@ export class Game {
         if (this.stage.tiles[row][col] !== TILE.BRICK) continue;
         const cx = (col + 0.5) * cell;
         const cy = (row + 0.5) * cell;
-        if (this.dist(x, y, cx, cy) < r) this.stage.tiles[row][col] = TILE.FLOOR;
+        if (this.dist(x, y, cx, cy) < r && blastReaches(this.stage, x, y, cx, cy)) {
+          this.stage.tiles[row][col] = TILE.FLOOR;
+        }
       }
     }
   }
@@ -218,18 +233,50 @@ export class Game {
   }
 
   private fire(dir: { x: number; y: number }): void {
-    const sx = this.pos.x + dir.x * (TANK_RADIUS + BULLET_RADIUS + 2);
-    const sy = this.pos.y + dir.y * (TANK_RADIUS + BULLET_RADIUS + 2);
+    this.spawnBullet(this.pos.x, this.pos.y, dir, 0);
+    this.facing = Math.atan2(dir.y, dir.x);
+  }
+
+  // owner: 0=自機, 1=敵。砲口（半径の外側）から発射する。
+  private spawnBullet(ox: number, oy: number, dir: { x: number; y: number }, owner: number): void {
+    const off = TANK_RADIUS + BULLET_RADIUS + 2;
     this.bullets.push({
-      x: sx,
-      y: sy,
+      x: ox + dir.x * off,
+      y: oy + dir.y * off,
       vx: dir.x * BULLET_SPEED,
       vy: dir.y * BULLET_SPEED,
       bounces: MAX_BOUNCES,
-      owner: 0,
+      owner,
       age: 0,
     });
-    this.facing = Math.atan2(dir.y, dir.x);
+  }
+
+  // 敵の移動（移動型は自機へ接近）と射撃（直射／バンクショット）。
+  private updateEnemies(dt: number): void {
+    for (const e of this.enemies) {
+      if (e.pattern === "mover") {
+        const dx = this.pos.x - e.x;
+        const dy = this.pos.y - e.y;
+        const m = Math.hypot(dx, dy) || 1;
+        const nx = e.x + (dx / m) * MOVER_SPEED * dt;
+        const ny = e.y + (dy / m) * MOVER_SPEED * dt;
+        const res = slide(e.x, e.y, nx, ny, (px, py) => circleHitsSolid(this.stage, px, py, TANK_RADIUS));
+        e.x = res.x;
+        e.y = res.y;
+        e.facing = Math.atan2(dy, dx);
+      }
+      e.cd -= dt;
+      if (e.cd <= 0) {
+        const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y);
+        if (dir) {
+          this.spawnBullet(e.x, e.y, dir, 1);
+          e.facing = Math.atan2(dir.y, dir.x);
+          e.cd = ENEMY_COOLDOWN;
+        } else {
+          e.cd = 0.3; // 射線が無いときは少し待って再試行
+        }
+      }
+    }
   }
 
   private respawn(): void {
@@ -259,7 +306,7 @@ export class Game {
     renderMap(ctx, this.stage);
     for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
-      drawTank(ctx, e.x, e.y, e.pattern === "stationary" ? COLORS.stationary : COLORS.mover, Math.PI / 2);
+      drawTank(ctx, e.x, e.y, e.pattern === "stationary" ? COLORS.stationary : COLORS.mover, e.facing);
     }
     this.drawAimLine(ctx);
     drawTank(ctx, this.pos.x, this.pos.y, COLORS.p1, this.facing);

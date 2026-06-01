@@ -46,15 +46,17 @@ function norm(x: number, y: number): { x: number; y: number } {
   return { x: x / m, y: y / m };
 }
 
-// 敵(ex,ey)から対象(px,py)を撃つ方向。直射→バンクショットの順に探す。
+// 敵(ex,ey)から対象(px,py)を撃つ方向。直射→（allowBank時のみ）バンクショットの順に探す。
 export function computeAimDir(
   stage: StageData,
   ex: number,
   ey: number,
   px: number,
   py: number,
+  allowBank = true,
 ): { x: number; y: number } | null {
   if (lineClear(stage, ex, ey, px, py)) return norm(px - ex, py - ey);
+  if (!allowBank) return null; // 直射のみ（移動型）
 
   // バンクショット：場外境界の内側面（1セル枠を想定）で対象を鏡像化し、1回反射の射線を探す。
   const { cell, cols, rows } = stage.grid;

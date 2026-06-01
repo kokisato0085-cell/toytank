@@ -18,5 +18,9 @@ export const MINE_WARN = 2; // 起爆何秒前から警告点滅するか
 export const MINE_BLAST_CELLS = 2.0; // 爆発半径 = この係数 × cell
 export const MINE_BLAST_LIFE = 0.4; // 地雷の爆発エフェクトの寿命(秒)
 
-export const ENEMY_COOLDOWN = 1.2; // 敵の発射間隔(秒)
+export const ENEMY_COOLDOWN_MOVER = 1.8; // 移動型の発射間隔(秒)
+export const ENEMY_COOLDOWN_STATIONARY = 2.6; // 静止型の発射間隔(秒)
+export const ENEMY_AIM_JITTER = 0.12; // 移動型の照準のばらつき(rad・約7°)
 export const MOVER_SPEED = 90; // 移動型の敵の速度(px/s)
+
+export const SOLO_LIVES = 3; // ソロの残機

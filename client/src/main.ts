@@ -49,3 +49,9 @@ game.start();
 
 const mineBtn = document.getElementById("btn-mine");
 if (mineBtn) mineBtn.addEventListener("click", () => game.layMine());
+
+const restartBtn = document.getElementById("btn-restart");
+if (restartBtn) restartBtn.addEventListener("click", () => game.restart());
+window.addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() === "r") game.restart();
+});

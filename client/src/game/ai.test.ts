@@ -51,4 +51,10 @@ describe("computeAimDir", () => {
     expect(dir).not.toBeNull();
     expect(Math.abs(dir!.y)).toBeGreaterThan(0.1);
   });
+
+  it("allowBank=false（移動型）なら、直射不可のとき null", () => {
+    const s = room();
+    s.tiles[2][3] = TILE.STEEL;
+    expect(computeAimDir(s, 100, 160, 380, 160, false)).toBeNull();
+  });
 });

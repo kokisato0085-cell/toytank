@@ -3,7 +3,7 @@
 // 弾の跳弾・命中・フレンドリーファイア、直進の照準線。
 
 import { TILE } from "../stage/types";
-import type { EnemyPattern, StageData } from "../stage/types";
+import type { EnemyPattern, StageData, TileValue } from "../stage/types";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
 import { circleHitsSolid, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
@@ -12,7 +12,9 @@ import { Input } from "./input";
 import {
   BULLET_RADIUS,
   BULLET_SPEED,
-  ENEMY_COOLDOWN,
+  ENEMY_AIM_JITTER,
+  ENEMY_COOLDOWN_MOVER,
+  ENEMY_COOLDOWN_STATIONARY,
   EXPLOSION_LIFE,
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
@@ -23,10 +25,13 @@ import {
   MINE_RADIUS,
   MOVER_SPEED,
   SELF_GRACE,
+  SOLO_LIVES,
   STEP,
   TANK_RADIUS,
   TANK_SPEED,
 } from "./constants";
+
+type GameState = "playing" | "cleared" | "gameover";
 
 interface Enemy {
   x: number;
@@ -37,6 +42,13 @@ interface Enemy {
 }
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
+
+// ベクトルを角度 ang(rad) 回転する。
+function rotate(v: { x: number; y: number }, ang: number): { x: number; y: number } {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+}
 
 export class Game {
   private ctx: CanvasRenderingContext2D;
@@ -52,6 +64,9 @@ export class Game {
   private facing = -Math.PI / 2; // 初期は上向き
   private acc = 0;
   private last = 0;
+  private lives = SOLO_LIVES;
+  private state: GameState = "playing";
+  private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
   constructor(canvas: HTMLCanvasElement, private stage: StageData) {
     const ctx = canvas.getContext("2d");
@@ -69,6 +84,7 @@ export class Game {
     this.pos = { ...this.spawn };
     this.enemies = stage.enemies.map((e) => ({ ...cellCenter(stage, e), pattern: e.pattern, cd: 0, facing: Math.PI / 2 }));
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
+    this.initialTiles = stage.tiles.map((row) => [...row]);
   }
 
   start(): void {
@@ -90,6 +106,8 @@ export class Game {
   };
 
   private update(dt: number): void {
+    if (this.state !== "playing") return; // クリア／ゲームオーバー中は停止
+
     // 移動（壁＋敵=障害物の軸別スライド）
     const a = this.input.axis();
     if (a.x !== 0 || a.y !== 0) {
@@ -126,7 +144,7 @@ export class Game {
       }
       // 自機への命中（自爆猶予経過後、または他者の弾）
       if ((b.owner !== 0 || b.age >= SELF_GRACE) && this.near(b.x, b.y, this.pos.x, this.pos.y)) {
-        this.respawn();
+        this.onPlayerDeath();
         return;
       }
       // 地雷への命中 → その地雷を即起爆（弾は消費）
@@ -170,6 +188,9 @@ export class Game {
     // 爆発エフェクトの寿命管理
     for (const ex of this.explosions) ex.t += dt;
     this.explosions = this.explosions.filter((ex) => ex.t < ex.life);
+
+    // クリア判定（敵を全滅）
+    if (this.enemies.length === 0) this.state = "cleared";
   }
 
   // 地雷を設置（最大 MAX_MINES）。外部ボタンからも呼べる。
@@ -206,7 +227,7 @@ export class Game {
       });
     }
     this.mines = this.mines.filter((_, j) => !det.has(j));
-    if (playerHit) this.respawn();
+    if (playerHit) this.onPlayerDeath();
   }
 
   // 爆心(mx,my)から(tx,ty)が爆風範囲内かつ壁に遮られていないか。
@@ -267,11 +288,15 @@ export class Game {
       }
       e.cd -= dt;
       if (e.cd <= 0) {
-        const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y);
+        const isStationary = e.pattern === "stationary";
+        // 移動型はバンクショットなし（直射のみ）。
+        let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, isStationary);
         if (dir) {
+          // 移動型は照準にばらつき（精度低め）。
+          if (!isStationary) dir = rotate(dir, (Math.random() * 2 - 1) * ENEMY_AIM_JITTER);
           this.spawnBullet(e.x, e.y, dir, 1);
           e.facing = Math.atan2(dir.y, dir.x);
-          e.cd = ENEMY_COOLDOWN;
+          e.cd = isStationary ? ENEMY_COOLDOWN_STATIONARY : ENEMY_COOLDOWN_MOVER;
         } else {
           e.cd = 0.3; // 射線が無いときは少し待って再試行
         }
@@ -279,9 +304,36 @@ export class Game {
     }
   }
 
-  private respawn(): void {
-    this.pos = { ...this.spawn };
+  private onPlayerDeath(): void {
+    this.lives--;
+    if (this.lives <= 0) {
+      this.state = "gameover";
+      return;
+    }
+    this.resetStage(); // 残機が残っていればステージを初期状態に戻してやり直し
+  }
+
+  // ステージを初期状態に戻す（壁・敵・地雷・弾・自機位置）。残機は変更しない。
+  private resetStage(): void {
+    this.stage.tiles = this.initialTiles.map((row) => [...row]);
+    this.enemies = this.stage.enemies.map((e) => ({
+      ...cellCenter(this.stage, e),
+      pattern: e.pattern,
+      cd: 0,
+      facing: Math.PI / 2,
+    }));
     this.bullets = [];
+    this.mines = [];
+    this.explosions = [];
+    this.pos = { ...this.spawn };
+    this.facing = -Math.PI / 2;
+  }
+
+  // 最初からやり直す（残機リセット）。クリア／ゲームオーバー後に呼ぶ。
+  restart(): void {
+    this.lives = SOLO_LIVES;
+    this.resetStage();
+    this.state = "playing";
   }
 
   private hitsEnemy(px: number, py: number): boolean {
@@ -317,6 +369,30 @@ export class Game {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.input.drawSticks(ctx);
+    this.drawHud(ctx);
+  }
+
+  // 残機・敵数・状態（デバイス座標で重ねる）。
+  private drawHud(ctx: CanvasRenderingContext2D): void {
+    ctx.fillStyle = "#222";
+    ctx.font = "16px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(`残機 ${this.lives}　敵 ${this.enemies.length}`, 10, 8);
+
+    if (this.state === "playing") return;
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height / 2;
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(0, cy - 48, ctx.canvas.width, 96);
+    ctx.fillStyle = this.state === "cleared" ? "#7CFC9B" : "#ff8080";
+    ctx.font = "bold 40px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(this.state === "cleared" ? "CLEAR!" : "GAME OVER", cx, cy - 10);
+    ctx.fillStyle = "#fff";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + 26);
   }
 
   // 直進の照準線（反射は描かない）。最初の壁／場外／敵に当たる位置まで。

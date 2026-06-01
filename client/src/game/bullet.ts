@@ -2,7 +2,7 @@
 // 壊せる壁に当たると破壊して消滅。命中（戦車）判定は呼び出し側（ゲームループ）で行う。
 
 import type { StageData } from "../stage/types";
-import { isSolidCell } from "./physics";
+import { isWallCell } from "./physics";
 import { BULLET_RADIUS } from "./constants";
 
 export interface Bullet {
@@ -26,7 +26,7 @@ export function advanceBullet(stage: StageData, b: Bullet, dt: number): boolean 
   {
     const col = Math.floor(nx / cell);
     const row = Math.floor(b.y / cell);
-    if (isSolidCell(stage, col, row)) {
+    if (isWallCell(stage, col, row)) {
       if (b.bounces <= 0) return false; // 反射上限超過で消滅
       b.bounces--;
       b.vx = -b.vx;
@@ -37,7 +37,7 @@ export function advanceBullet(stage: StageData, b: Bullet, dt: number): boolean 
   {
     const col = Math.floor(nx / cell);
     const row = Math.floor(ny / cell);
-    if (isSolidCell(stage, col, row)) {
+    if (isWallCell(stage, col, row)) {
       if (b.bounces <= 0) return false;
       b.bounces--;
       b.vy = -b.vy;

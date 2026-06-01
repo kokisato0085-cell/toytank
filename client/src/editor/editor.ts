@@ -21,6 +21,7 @@ type Tool =
   | "paint-floor"
   | "paint-steel"
   | "paint-brick"
+  | "paint-hole"
   | "place-p1"
   | "place-p2"
   | "place-enemy-stationary"
@@ -33,6 +34,7 @@ const COLORS = {
   floor: "#e8e6df",
   steel: "#5a5f6a",
   brick: "#b5723a",
+  hole: "#222a36",
   line: "#c8c8c8",
   p1: "#2d7dd2",
   p2: "#2a8a3e",
@@ -106,6 +108,10 @@ function applyAt(col: number, row: number): void {
       setTile(col, row, TILE.BRICK);
       removeSpawnAt(col, row);
       break;
+    case "paint-hole":
+      setTile(col, row, TILE.HOLE);
+      removeSpawnAt(col, row);
+      break;
     case "place-p1":
       setTile(col, row, TILE.FLOOR);
       removeSpawnAt(col, row);
@@ -141,7 +147,8 @@ function render(): void {
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const v = state.tiles[r][c];
-      ctx.fillStyle = v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : COLORS.floor;
+      ctx.fillStyle =
+        v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : v === TILE.HOLE ? COLORS.hole : COLORS.floor;
       ctx.fillRect(c * VIEW, r * VIEW, VIEW, VIEW);
     }
   }

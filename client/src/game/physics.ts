@@ -9,11 +9,19 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-// セルがソリッドか。範囲外は壁扱い（場外に出さない）。
+// 戦車にとってソリッドか（床以外＝鋼・壊せる壁・穴は通れない）。範囲外も壁扱い。
 export function isSolidCell(stage: StageData, col: number, row: number): boolean {
   const { cols, rows } = stage.grid;
   if (col < 0 || col >= cols || row < 0 || row >= rows) return true;
   return stage.tiles[row][col] !== TILE.FLOOR;
+}
+
+// 弾・射線・爆風を遮る壁か（鋼・壊せる壁・場外のみ。穴と床は通す）。
+export function isWallCell(stage: StageData, col: number, row: number): boolean {
+  const { cols, rows } = stage.grid;
+  if (col < 0 || col >= cols || row < 0 || row >= rows) return true;
+  const t = stage.tiles[row][col];
+  return t === TILE.STEEL || t === TILE.BRICK;
 }
 
 // 中心(x,y)・半径 r の円が、いずれかのソリッドセルと重なるか。

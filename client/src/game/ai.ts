@@ -2,7 +2,7 @@
 // 直射が通れば直接狙う。遮蔽で通らなければ、場外4面での1回反射（バンクショット）を試す。
 // 射線が通る方向（正規化ベクトル）を返す。撃てる解がなければ null。
 
-import { isSolidCell } from "./physics";
+import { isWallCell } from "./physics";
 import type { StageData } from "../stage/types";
 
 // 線分 (x1,y1)-(x2,y2) が壁セルに遮られていないか（端点付近は除外してサンプリング）。
@@ -16,7 +16,7 @@ export function lineClear(stage: StageData, x1: number, y1: number, x2: number, 
     const t = i / n;
     const col = Math.floor((x1 + dx * t) / cell);
     const row = Math.floor((y1 + dy * t) / cell);
-    if (isSolidCell(stage, col, row)) return false;
+    if (isWallCell(stage, col, row)) return false;
   }
   return true;
 }
@@ -36,7 +36,7 @@ export function blastReaches(stage: StageData, mx: number, my: number, tx: numbe
     const col = Math.floor((mx + dx * t) / cell);
     const row = Math.floor((my + dy * t) / cell);
     if (col === tcol && row === trow) continue; // 対象セルは無視
-    if (isSolidCell(stage, col, row)) return false;
+    if (isWallCell(stage, col, row)) return false;
   }
   return true;
 }

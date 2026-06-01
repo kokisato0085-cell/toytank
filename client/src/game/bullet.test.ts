@@ -45,6 +45,16 @@ describe("advanceBullet", () => {
   });
 });
 
+describe("穴(HOLE) の上", () => {
+  it("弾は反射せず通過する", () => {
+    const s = freshStage();
+    s.tiles[2][2] = TILE.HOLE; // col2,row2 に穴
+    const b = bullet({ x: 96, y: 160, vx: 600, vy: 0, bounces: 1 }); // col1→col2(穴)
+    expect(advanceBullet(s, b, 0.1)).toBe(true);
+    expect(b.vx).toBe(600); // 反射しない
+  });
+});
+
 describe("bulletsCollide", () => {
   it("近接していれば衝突、離れていれば非衝突", () => {
     expect(bulletsCollide(bullet({ x: 100, y: 100 }), bullet({ x: 105, y: 100 }))).toBe(true);

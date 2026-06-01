@@ -8,6 +8,7 @@ export const COLORS = {
   floor: "#e8e6df",
   steel: "#5a5f6a",
   brick: "#b5723a",
+  hole: "#222a36",
   line: "rgba(0,0,0,0.06)",
   p1: "#2d7dd2",
   p2: "#2a8a3e",
@@ -38,7 +39,8 @@ export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const v = stage.tiles[r][c];
-      ctx.fillStyle = v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : COLORS.floor;
+      ctx.fillStyle =
+        v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : v === TILE.HOLE ? COLORS.hole : COLORS.floor;
       ctx.fillRect(c * cell, r * cell, cell, cell);
     }
   }

@@ -3,12 +3,13 @@
 
 // タイル種別。壁はマス目単位で持つ。
 export const TILE = {
-  FLOOR: 0, // 床（通行可・射線を通す）
-  STEEL: 1, // 壊せない壁（弾は反射）
-  BRICK: 2, // 壊せる壁（弾で破壊され床になる）
+  FLOOR: 0, // 床（戦車・弾とも通行可）
+  STEEL: 1, // 壊せない壁（戦車不可・弾は反射）
+  BRICK: 2, // 壊せる壁（戦車不可・弾は反射、地雷の爆発で破壊）
+  HOLE: 3, // 穴（戦車は通れない／弾・射線・爆風は通る・落下なし）
 } as const;
 
-export type TileValue = 0 | 1 | 2;
+export type TileValue = 0 | 1 | 2 | 3;
 
 // 敵の行動パターン（BasicDesign §10）。
 export type EnemyPattern = "stationary" | "mover";

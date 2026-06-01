@@ -32,8 +32,8 @@ export function validateStage(s: StageData): string[] {
     }
     for (let c = 0; c < line.length; c++) {
       const v = line[c];
-      if (v !== 0 && v !== 1 && v !== 2) {
-        errors.push(`tiles[${r}][${c}] の値(${v})が不正です（0/1/2のみ）`);
+      if (v !== 0 && v !== 1 && v !== 2 && v !== 3) {
+        errors.push(`tiles[${r}][${c}] の値(${v})が不正です（0/1/2/3のみ）`);
       }
     }
   }

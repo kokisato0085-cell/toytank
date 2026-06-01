@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createEmptyStage, fillBorderSteel } from "../stage/edit";
-import { circleHitsSolid, isSolidCell, resolveMove, slide } from "./physics";
+import { TILE } from "../stage/types";
+import { circleHitsSolid, isSolidCell, isWallCell, resolveMove, slide } from "./physics";
 
 // 5×4・外周鋼。内部の床セルは col1..3 / row1..2、cell=64。
 // セル中心 (col,row) のワールド座標 = ((col+0.5)*64, (row+0.5)*64)
@@ -12,6 +13,17 @@ describe("isSolidCell", () => {
     expect(isSolidCell(stage, 0, 0)).toBe(true); // 外周
     expect(isSolidCell(stage, 2, 2)).toBe(false); // 内部床
     expect(isSolidCell(stage, -1, 2)).toBe(true); // 範囲外
+  });
+});
+
+describe("穴(HOLE) の扱い", () => {
+  const s = fillBorderSteel(createEmptyStage(5, 4, 64));
+  s.tiles[2][2] = TILE.HOLE;
+  it("戦車にはソリッド（通れない）", () => {
+    expect(isSolidCell(s, 2, 2)).toBe(true);
+  });
+  it("弾・射線・爆風は通す（壁ではない）", () => {
+    expect(isWallCell(s, 2, 2)).toBe(false);
   });
 });
 

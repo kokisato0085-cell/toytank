@@ -24,6 +24,7 @@ import {
   MINE_FUSE,
   MINE_RADIUS,
   MOVER_SPEED,
+  RESPAWN_PAUSE,
   SELF_GRACE,
   SOLO_LIVES,
   STEP,
@@ -31,7 +32,7 @@ import {
   TANK_SPEED,
 } from "./constants";
 
-type GameState = "playing" | "cleared" | "gameover";
+type GameState = "playing" | "respawning" | "cleared" | "gameover";
 
 interface Enemy {
   x: number;
@@ -52,7 +53,7 @@ function rotate(v: { x: number; y: number }, ang: number): { x: number; y: numbe
 
 export class Game {
   private ctx: CanvasRenderingContext2D;
-  private scale: number;
+  private scale = 1;
   private input: Input;
   private spawn: { x: number; y: number };
   private pos: { x: number; y: number };
@@ -66,25 +67,45 @@ export class Game {
   private last = 0;
   private lives = SOLO_LIVES;
   private state: GameState = "playing";
+  private interTimer = 0; // 区切りポーズの残り秒
   private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
-  constructor(canvas: HTMLCanvasElement, private stage: StageData) {
+  // 進行制御のコールバック（キャンペーン用）。クリア／ゲームオーバー遷移時に1回呼ぶ。
+  onStageClear: (() => void) | null = null;
+  onGameOver: (() => void) | null = null;
+
+  constructor(private canvas: HTMLCanvasElement, private stage: StageData) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D コンテキストを取得できません");
     this.ctx = ctx;
-
-    const { w, h } = worldSize(stage);
-    const maxW = Math.min(760, window.innerWidth - 20);
-    this.scale = maxW / w;
-    canvas.width = Math.round(w * this.scale);
-    canvas.height = Math.round(h * this.scale);
-
+    this.fit();
     this.input = new Input(canvas);
     this.spawn = cellCenter(stage, stage.players[0]);
     this.pos = { ...this.spawn };
     this.enemies = stage.enemies.map((e) => ({ ...cellCenter(stage, e), pattern: e.pattern, cd: 0, facing: Math.PI / 2 }));
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
+  }
+
+  // 画面幅に合わせてキャンバスサイズと拡大率を設定（ステージごとにサイズが違ってもよい）。
+  private fit(): void {
+    const { w, h } = worldSize(this.stage);
+    const maxW = Math.min(760, window.innerWidth - 20);
+    this.scale = maxW / w;
+    this.canvas.width = Math.round(w * this.scale);
+    this.canvas.height = Math.round(h * this.scale);
+  }
+
+  // 別ステージを読み込む（キャンペーンの次ステージ等）。resetLives で残機を初期化するか選ぶ。
+  loadStage(stage: StageData, resetLives: boolean): void {
+    this.stage = stage;
+    this.spawn = cellCenter(stage, stage.players[0]);
+    this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
+    this.initialTiles = stage.tiles.map((row) => [...row]);
+    this.fit();
+    if (resetLives) this.lives = SOLO_LIVES;
+    this.resetStage();
+    this.state = "playing";
   }
 
   start(): void {
@@ -96,6 +117,16 @@ export class Game {
     let dt = (t - this.last) / 1000;
     this.last = t;
     if (dt > 0.25) dt = 0.25;
+
+    // 被弾後の区切りポーズ：時間が来たら自機だけ復活して再開（敵・壊した壁は維持）
+    if (this.state === "respawning") {
+      this.interTimer -= dt;
+      if (this.interTimer <= 0) {
+        this.respawnPlayer();
+        this.state = "playing";
+      }
+    }
+
     this.acc += dt;
     while (this.acc >= STEP) {
       this.update(STEP);
@@ -190,7 +221,10 @@ export class Game {
     this.explosions = this.explosions.filter((ex) => ex.t < ex.life);
 
     // クリア判定（敵を全滅）
-    if (this.enemies.length === 0) this.state = "cleared";
+    if (this.enemies.length === 0) {
+      this.state = "cleared";
+      this.onStageClear?.(); // キャンペーンなら次ステージへ（loadStageで再びplayingになる）
+    }
   }
 
   // 地雷を設置（最大 MAX_MINES）。外部ボタンからも呼べる。
@@ -308,9 +342,21 @@ export class Game {
     this.lives--;
     if (this.lives <= 0) {
       this.state = "gameover";
+      this.onGameOver?.();
       return;
     }
-    this.resetStage(); // 残機が残っていればステージを初期状態に戻してやり直し
+    // 残機が残っていれば、区切りポーズ後に自機だけ復活（倒した敵・壊した壁は維持）
+    this.state = "respawning";
+    this.interTimer = RESPAWN_PAUSE;
+  }
+
+  // 自機だけリスポーンする（敵・タイルは維持）。被弾→再開で使う。
+  private respawnPlayer(): void {
+    this.pos = { ...this.spawn };
+    this.facing = -Math.PI / 2;
+    this.bullets = [];
+    this.mines = [];
+    this.explosions = [];
   }
 
   // ステージを初期状態に戻す（壁・敵・地雷・弾・自機位置）。残機は変更しない。
@@ -383,16 +429,32 @@ export class Game {
     if (this.state === "playing") return;
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
+    let title: string;
+    let color: string;
+    let sub: string;
+    if (this.state === "cleared") {
+      title = "CLEAR!";
+      color = "#7CFC9B";
+      sub = "R キー / リスタートボタンで再挑戦";
+    } else if (this.state === "gameover") {
+      title = "GAME OVER";
+      color = "#ff8080";
+      sub = "R キー / リスタートボタンで再挑戦";
+    } else {
+      title = `ミス！  残機 ×${this.lives}`;
+      color = "#ffd23a";
+      sub = "まもなく再開…";
+    }
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, cy - 48, ctx.canvas.width, 96);
-    ctx.fillStyle = this.state === "cleared" ? "#7CFC9B" : "#ff8080";
-    ctx.font = "bold 40px sans-serif";
+    ctx.fillStyle = color;
+    ctx.font = "bold 36px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(this.state === "cleared" ? "CLEAR!" : "GAME OVER", cx, cy - 10);
+    ctx.fillText(title, cx, cy - 10);
     ctx.fillStyle = "#fff";
     ctx.font = "16px sans-serif";
-    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + 26);
+    ctx.fillText(sub, cx, cy + 26);
   }
 
   // 直進の照準線（反射は描かない）。最初の壁／場外／敵に当たる位置まで。

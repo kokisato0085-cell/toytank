@@ -79,6 +79,14 @@
       <button id="btn-apply-text">テキストを反映（読み込み）</button>
     </div>
 
+    <h3 style="font-size: 14px; margin: 16px 0 4px;">ステージ順（キャンペーン）— ゲームはこの順番で進行</h3>
+    <div class="row">
+      追加: <select id="sel-campaign-add"></select>
+      <button id="btn-campaign-add">＋順番に追加</button>
+      <span class="hint">保存済みステージを選んで順番リストに足す</span>
+    </div>
+    <ol id="campaign-list" style="font-size: 13px; padding-left: 22px;"></ol>
+
     <script type="module" src="/src/editor/editor.ts"></script>
   </body>
 </html>

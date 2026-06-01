@@ -5,6 +5,7 @@ import type { StageData } from "../stage/types";
 import { validateStage } from "../stage/validate";
 
 const LS_PREFIX = "toytank.stage.";
+const LS_CAMPAIGN = "toytank.campaign";
 
 // 保存済みステージ名の一覧。
 export function listSavedStages(): string[] {
@@ -15,6 +16,23 @@ export function listSavedStages(): string[] {
   }
   names.sort();
   return names;
+}
+
+// キャンペーン（再生順のステージ名リスト）を読み込む。
+export function loadCampaign(): string[] {
+  try {
+    const raw = localStorage.getItem(LS_CAMPAIGN);
+    if (!raw) return [];
+    const a = JSON.parse(raw);
+    return Array.isArray(a) ? a.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// キャンペーンを保存する。
+export function saveCampaign(names: string[]): void {
+  localStorage.setItem(LS_CAMPAIGN, JSON.stringify(names));
 }
 
 // 名前で読み込む。存在しない／壊れている／検証エラーなら null。

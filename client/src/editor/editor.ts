@@ -6,6 +6,7 @@ import { TILE } from "../stage/types";
 import type { CellPos, EnemyPattern, EnemySpec, StageData, TileValue } from "../stage/types";
 import { createEmptyStage, fillBorderSteel, resizeStage } from "../stage/edit";
 import { validateStage } from "../stage/validate";
+import { listSavedStages, loadCampaign, saveCampaign } from "../game/stageStore";
 
 // 編集中の内部状態。P1/P2 を区別して持ち、書き出し時に StageData.players へ並べる。
 interface EditorState {
@@ -75,6 +76,8 @@ const inRows = $<HTMLInputElement>("in-rows");
 const inCell = $<HTMLInputElement>("in-cell");
 const jsonText = $<HTMLTextAreaElement>("json-text");
 const selSaved = $<HTMLSelectElement>("sel-saved");
+const selCampaignAdd = $<HTMLSelectElement>("sel-campaign-add");
+const campaignList = $<HTMLOListElement>("campaign-list");
 
 const LS_PREFIX = "toytank.stage.";
 
@@ -389,6 +392,7 @@ $("btn-save-local").addEventListener("click", () => {
   state.name = name;
   localStorage.setItem(LS_PREFIX + name, currentJson());
   refreshSavedList();
+  renderCampaign();
   selSaved.value = name;
   messages.className = "ok";
   messages.textContent = `✓ 「${name}」をブラウザに保存しました`;
@@ -412,6 +416,64 @@ $("btn-delete-local").addEventListener("click", () => {
   if (!confirm(`保存した「${name}」を削除しますか？`)) return;
   localStorage.removeItem(LS_PREFIX + name);
   refreshSavedList();
+});
+
+// ---- ステージ順（キャンペーン） ----
+function mkBtn(label: string, fn: () => void): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.style.marginLeft = "4px";
+  b.addEventListener("click", fn);
+  return b;
+}
+
+function renderCampaign(): void {
+  // 追加用ドロップダウン（保存済みステージ）
+  selCampaignAdd.innerHTML = "";
+  for (const n of listSavedStages()) {
+    const o = document.createElement("option");
+    o.value = n;
+    o.textContent = n;
+    selCampaignAdd.appendChild(o);
+  }
+  // 順番リスト
+  const camp = loadCampaign();
+  campaignList.innerHTML = "";
+  camp.forEach((name, i) => {
+    const li = document.createElement("li");
+    li.textContent = name + " ";
+    li.append(
+      mkBtn("↑", () => {
+        if (i > 0) {
+          [camp[i - 1], camp[i]] = [camp[i], camp[i - 1]];
+          saveCampaign(camp);
+          renderCampaign();
+        }
+      }),
+      mkBtn("↓", () => {
+        if (i < camp.length - 1) {
+          [camp[i + 1], camp[i]] = [camp[i], camp[i + 1]];
+          saveCampaign(camp);
+          renderCampaign();
+        }
+      }),
+      mkBtn("✕", () => {
+        camp.splice(i, 1);
+        saveCampaign(camp);
+        renderCampaign();
+      }),
+    );
+    campaignList.appendChild(li);
+  });
+}
+
+$("btn-campaign-add").addEventListener("click", () => {
+  const name = selCampaignAdd.value;
+  if (!name) return;
+  const camp = loadCampaign();
+  camp.push(name);
+  saveCampaign(camp);
+  renderCampaign();
 });
 
 // 読み込んだ JSON を編集状態へ（最小限の防御的チェック）。
@@ -458,4 +520,5 @@ function syncInputs(): void {
 // ---- 起動 ----
 syncInputs();
 refreshSavedList();
+renderCampaign();
 refresh();

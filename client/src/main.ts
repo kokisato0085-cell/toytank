@@ -67,9 +67,13 @@ const game = new Game(canvas, stage);
 if (campaignMode) {
   game.onStageClear = () => {
     idx++;
-    if (idx < campaign.length) game.loadStage(campaign[idx], false); // 残機は引き継ぐ
+    if (idx < campaign.length) {
+      game.loadStage(campaign[idx], false); // 残機は引き継ぐ
+      game.beginStage(`ステージ ${idx + 1}`);
+    }
     // 最後のステージをクリアしたら "CLEAR!" のまま（全クリア）
   };
+  game.beginStage("ステージ 1"); // 初回の区切り画面
 }
 
 game.start();
@@ -80,6 +84,7 @@ function restart(): void {
   if (campaignMode) {
     idx = 0;
     game.loadStage(campaign[0], true); // 残機リセットで最初から
+    game.beginStage("ステージ 1");
   } else {
     game.restart();
   }

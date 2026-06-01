@@ -23,6 +23,7 @@ import {
   MINE_BLAST_LIFE,
   MINE_FUSE,
   MINE_RADIUS,
+  INTRO_PAUSE,
   MOVER_SPEED,
   RESPAWN_PAUSE,
   SELF_GRACE,
@@ -32,7 +33,7 @@ import {
   TANK_SPEED,
 } from "./constants";
 
-type GameState = "playing" | "respawning" | "cleared" | "gameover";
+type GameState = "intro" | "playing" | "respawning" | "cleared" | "gameover";
 
 interface Enemy {
   x: number;
@@ -67,7 +68,8 @@ export class Game {
   private last = 0;
   private lives = SOLO_LIVES;
   private state: GameState = "playing";
-  private interTimer = 0; // 区切りポーズの残り秒
+  private interTimer = 0; // 区切りポーズ／開始画面の残り秒
+  private stageLabel = ""; // 「ステージN」表示用
   private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
   // 進行制御のコールバック（キャンペーン用）。クリア／ゲームオーバー遷移時に1回呼ぶ。
@@ -108,6 +110,13 @@ export class Game {
     this.state = "playing";
   }
 
+  // ステージ開始の区切り画面を表示する（キャンペーンで各ステージ開始時に呼ぶ）。
+  beginStage(label: string): void {
+    this.stageLabel = label;
+    this.state = "intro";
+    this.interTimer = INTRO_PAUSE;
+  }
+
   start(): void {
     this.last = performance.now();
     requestAnimationFrame(this.loop);
@@ -118,11 +127,11 @@ export class Game {
     this.last = t;
     if (dt > 0.25) dt = 0.25;
 
-    // 被弾後の区切りポーズ：時間が来たら自機だけ復活して再開（敵・壊した壁は維持）
-    if (this.state === "respawning") {
+    // 区切り（開始画面／被弾ポーズ）：時間が来たら再開
+    if (this.state === "intro" || this.state === "respawning") {
       this.interTimer -= dt;
       if (this.interTimer <= 0) {
-        this.respawnPlayer();
+        if (this.state === "respawning") this.respawnPlayer(); // 自機だけ復活（敵・壁は維持）
         this.state = "playing";
       }
     }
@@ -250,7 +259,9 @@ export class Game {
     while (queue.length) {
       const m = this.mines[queue.pop()!];
       this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
-      this.destroyBricksNear(m.x, m.y, this.blastR);
+      // 1) 壊すブロックを「破壊前のタイル」で確定（手前の壁が奥を守る＝貫通させない）
+      const bricks = this.collectBlastBricks(m.x, m.y);
+      // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
       if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
       this.enemies = this.enemies.filter((e) => !this.inBlast(m.x, m.y, e.x, e.y));
       this.mines.forEach((o, j) => {
@@ -259,6 +270,8 @@ export class Game {
           queue.push(j);
         }
       });
+      // 3) 最後にブロックを破壊（↑の判定には影響させない）
+      for (const [c, r] of bricks) this.stage.tiles[r][c] = TILE.FLOOR;
     }
     this.mines = this.mines.filter((_, j) => !det.has(j));
     if (playerHit) this.onPlayerDeath();
@@ -269,18 +282,21 @@ export class Game {
     return this.dist(mx, my, tx, ty) < this.blastR && blastReaches(this.stage, mx, my, tx, ty);
   }
 
-  private destroyBricksNear(x: number, y: number, r: number): void {
+  // 爆心(x,y)で壊すべき壊せる壁のセルを列挙（タイルは変更しない）。
+  private collectBlastBricks(x: number, y: number): [number, number][] {
     const { cols, rows, cell } = this.stage.grid;
+    const out: [number, number][] = [];
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         if (this.stage.tiles[row][col] !== TILE.BRICK) continue;
         const cx = (col + 0.5) * cell;
         const cy = (row + 0.5) * cell;
-        if (this.dist(x, y, cx, cy) < r && blastReaches(this.stage, x, y, cx, cy)) {
-          this.stage.tiles[row][col] = TILE.FLOOR;
+        if (this.dist(x, y, cx, cy) < this.blastR && blastReaches(this.stage, x, y, cx, cy)) {
+          out.push([col, row]);
         }
       }
     }
+    return out;
   }
 
   private dist(ax: number, ay: number, bx: number, by: number): number {
@@ -427,6 +443,10 @@ export class Game {
     ctx.fillText(`残機 ${this.lives}　敵 ${this.enemies.length}`, 10, 8);
 
     if (this.state === "playing") return;
+    if (this.state === "intro") {
+      this.drawIntro(ctx);
+      return;
+    }
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
     let title: string;
@@ -455,6 +475,48 @@ export class Game {
     ctx.fillStyle = "#fff";
     ctx.font = "16px sans-serif";
     ctx.fillText(sub, cx, cy + 26);
+  }
+
+  // ステージ開始の区切り画面：ステージ名・出現する敵（色×数）・残機。
+  private drawIntro(ctx: CanvasRenderingContext2D): void {
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height / 2;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 40px sans-serif";
+    ctx.fillText(this.stageLabel, cx, cy - 70);
+
+    // 出現する敵（パターン＝色 ごとの数）
+    const stat = this.enemies.filter((e) => e.pattern === "stationary").length;
+    const mov = this.enemies.filter((e) => e.pattern === "mover").length;
+    const entries: { color: string; count: number }[] = [];
+    if (stat > 0) entries.push({ color: COLORS.stationary, count: stat });
+    if (mov > 0) entries.push({ color: COLORS.mover, count: mov });
+    const ew = 90;
+    let x = cx - (entries.length * ew) / 2 + ew / 2;
+    ctx.font = "22px sans-serif";
+    for (const e of entries) {
+      ctx.fillStyle = e.color;
+      ctx.beginPath();
+      ctx.arc(x - 16, cy, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "left";
+      ctx.fillText(`×${e.count}`, x, cy);
+      x += ew;
+    }
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.font = "18px sans-serif";
+    ctx.fillText(`残機 ×${this.lives}`, cx, cy + 52);
+    ctx.fillStyle = "#ccc";
+    ctx.font = "14px sans-serif";
+    ctx.fillText("まもなく開始…", cx, cy + 82);
   }
 
   // 直進の照準線（反射は描かない）。最初の壁／場外／敵に当たる位置まで。

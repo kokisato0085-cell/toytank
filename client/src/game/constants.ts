@@ -25,3 +25,4 @@ export const MOVER_SPEED = 90; // 移動型の敵の速度(px/s)
 
 export const SOLO_LIVES = 3; // ソロの残機
 export const RESPAWN_PAUSE = 1.2; // 被弾後、再開までの区切りポーズ(秒)
+export const INTRO_PAUSE = 2.2; // ステージ開始の区切り画面の表示時間(秒)

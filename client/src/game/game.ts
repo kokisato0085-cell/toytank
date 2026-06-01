@@ -12,6 +12,7 @@ import { Input } from "./input";
 import {
   BULLET_RADIUS,
   BULLET_SPEED,
+  DEATH_FX,
   ENEMY_AIM_JITTER,
   ENEMY_COOLDOWN_MOVER,
   ENEMY_COOLDOWN_STATIONARY,
@@ -24,6 +25,7 @@ import {
   MINE_FUSE,
   MINE_RADIUS,
   INTRO_PAUSE,
+  MAX_TRACKS,
   MOVER_SPEED,
   RESPAWN_PAUSE,
   SELF_GRACE,
@@ -31,15 +33,18 @@ import {
   STEP,
   TANK_RADIUS,
   TANK_SPEED,
+  TRACK_GAP,
 } from "./constants";
 
-type GameState = "intro" | "playing" | "respawning" | "cleared" | "gameover";
+type GameState = "intro" | "playing" | "dying" | "respawning" | "cleared" | "gameover";
 
 interface Enemy {
   x: number;
   y: number;
   hx: number; // 初期位置（リスポーン時に戻す）
   hy: number;
+  tx: number; // 直近のキャタピラ跡を刻んだ位置
+  ty: number;
   pattern: EnemyPattern;
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
@@ -68,11 +73,32 @@ function drawTankIcon(ctx: CanvasRenderingContext2D, x: number, y: number, color
   ctx.stroke();
 }
 
+// 撃破バッテン印（×）を描く。視認性のため暗いふちどりの上に本体色。
+function drawCross(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
+  const r = TANK_RADIUS * 0.8;
+  ctx.lineCap = "round";
+  const stroke = (w: number, c: string): void => {
+    ctx.strokeStyle = c;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r);
+    ctx.lineTo(x + r, y + r);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - r, y + r);
+    ctx.lineTo(x + r, y - r);
+    ctx.stroke();
+  };
+  stroke(8, "rgba(0,0,0,0.5)"); // ふちどり
+  stroke(5, color); // 本体
+  ctx.lineCap = "butt";
+}
+
 // ステージ定義から敵エンティティを生成（初期位置 hx/hy も保持）。
 function makeEnemies(stage: StageData): Enemy[] {
   return stage.enemies.map((e) => {
     const c = cellCenter(stage, e);
-    return { x: c.x, y: c.y, hx: c.x, hy: c.y, pattern: e.pattern, cd: 0, facing: Math.PI / 2 };
+    return { x: c.x, y: c.y, hx: c.x, hy: c.y, tx: c.x, ty: c.y, pattern: e.pattern, cd: 0, facing: Math.PI / 2 };
   });
 }
 
@@ -92,9 +118,13 @@ export class Game {
   private last = 0;
   private lives = SOLO_LIVES;
   private state: GameState = "playing";
-  private interTimer = 0; // 区切りポーズ／開始画面の残り秒
+  private interTimer = 0; // 区切りポーズ／開始画面／大破演出の残り秒
+  private pendingGameOver = false; // 大破演出のあとゲームオーバーへ進むか
   private stageLabel = ""; // 「ステージN」表示用
   private kills: Record<EnemyPattern, number> = { stationary: 0, mover: 0 }; // 種類別の撃破数（リザルト用）
+  private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
+  private deathMarks: { x: number; y: number; color: string }[] = []; // 撃破バッテン印
+  private playerTrackFrom = { x: 0, y: 0 }; // 自機の直近の跡位置
   private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
   // 進行制御のコールバック（キャンペーン用）。クリア／ゲームオーバー遷移時に1回呼ぶ。
@@ -109,6 +139,7 @@ export class Game {
     this.input = new Input(canvas);
     this.spawn = cellCenter(stage, stage.players[0]);
     this.pos = { ...this.spawn };
+    this.playerTrackFrom = { ...this.spawn };
     this.enemies = makeEnemies(stage);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
@@ -155,13 +186,24 @@ export class Game {
     this.last = t;
     if (dt > 0.25) dt = 0.25;
 
-    // 区切り（開始画面／被弾ポーズ）：時間が来たら再開
-    if (this.state === "intro" || this.state === "respawning") {
+    this.ageExplosions(dt); // 爆発エフェクトはどの状態でも進める（大破演出のため）
+
+    if (this.state === "dying") {
+      // 大破演出 → 終わったらゲームオーバー or 区切りポーズ（自機復活）へ
       this.interTimer -= dt;
       if (this.interTimer <= 0) {
-        if (this.state === "respawning") this.respawnPlayer(); // 自機だけ復活（敵・壁は維持）
-        this.state = "playing";
+        if (this.pendingGameOver) {
+          this.state = "gameover";
+          this.onGameOver?.();
+        } else {
+          this.respawnPlayer(); // 自機だけ復活（敵・壁は維持）
+          this.state = "respawning";
+          this.interTimer = RESPAWN_PAUSE;
+        }
       }
+    } else if (this.state === "intro" || this.state === "respawning") {
+      this.interTimer -= dt;
+      if (this.interTimer <= 0) this.state = "playing";
     }
 
     this.acc += dt;
@@ -185,6 +227,7 @@ export class Game {
         circleHitsSolid(this.stage, px, py, TANK_RADIUS) || this.hitsEnemy(px, py);
       this.pos = slide(this.pos.x, this.pos.y, nx, ny, blocked);
       this.facing = Math.atan2(a.y, a.x);
+      this.stampTrack(this.pos.x, this.pos.y, this.facing, this.playerTrackFrom);
     }
     // 照準中は砲塔を照準方向へ
     const ad = this.input.aimDir();
@@ -207,7 +250,7 @@ export class Game {
       if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
       const ei = this.enemies.findIndex((e) => this.near(b.x, b.y, e.x, e.y));
       if (ei >= 0) {
-        this.kills[this.enemies[ei].pattern]++; // 撃破数を集計
+        this.markKill(this.enemies[ei]); // 撃破数＋バッテン印
         this.enemies.splice(ei, 1); // 敵を破壊（FF：弾は所有者を問わず当たる）
         continue;
       }
@@ -254,10 +297,6 @@ export class Game {
     for (let n = this.input.takeMines(); n > 0; n--) this.layMine();
     this.updateMines(dt);
 
-    // 爆発エフェクトの寿命管理
-    for (const ex of this.explosions) ex.t += dt;
-    this.explosions = this.explosions.filter((ex) => ex.t < ex.life);
-
     // クリア判定（敵を全滅）
     if (this.enemies.length === 0) {
       this.state = "cleared";
@@ -294,7 +333,7 @@ export class Game {
       if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
       this.enemies = this.enemies.filter((e) => {
         if (this.inBlast(m.x, m.y, e.x, e.y)) {
-          this.kills[e.pattern]++; // 撃破数を集計
+          this.markKill(e); // 撃破数＋バッテン印
           return false;
         }
         return true;
@@ -338,6 +377,27 @@ export class Game {
     return Math.hypot(ax - bx, ay - by);
   }
 
+  private addTrack(x: number, y: number, a: number): void {
+    this.tracks.push({ x, y, a });
+    if (this.tracks.length > MAX_TRACKS) this.tracks.shift();
+  }
+
+  // 一定距離以上動いたらキャタピラ跡を刻む（from を現在位置に更新）。
+  private stampTrack(x: number, y: number, a: number, from: { x: number; y: number }): void {
+    if (this.dist(x, y, from.x, from.y) >= TRACK_GAP) {
+      this.addTrack(x, y, a);
+      from.x = x;
+      from.y = y;
+    }
+  }
+
+  // 敵の撃破を記録（撃破数の集計＋大破演出＋やられた座標に白いバッテン印）。
+  private markKill(e: Enemy): void {
+    this.kills[e.pattern]++;
+    this.spawnDeathFx(e.x, e.y); // 敵も大破演出
+    this.deathMarks.push({ x: e.x, y: e.y, color: "#ffffff" });
+  }
+
   private fire(dir: { x: number; y: number }): void {
     this.spawnBullet(this.pos.x, this.pos.y, dir, 0);
     this.facing = Math.atan2(dir.y, dir.x);
@@ -366,10 +426,15 @@ export class Game {
         const m = Math.hypot(dx, dy) || 1;
         const nx = e.x + (dx / m) * MOVER_SPEED * dt;
         const ny = e.y + (dy / m) * MOVER_SPEED * dt;
-        const res = slide(e.x, e.y, nx, ny, (px, py) => circleHitsSolid(this.stage, px, py, TANK_RADIUS));
+        const res = slide(e.x, e.y, nx, ny, (px, py) => this.moverBlocked(px, py, e));
         e.x = res.x;
         e.y = res.y;
         e.facing = Math.atan2(dy, dx);
+        if (this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
+          this.addTrack(e.x, e.y, e.facing);
+          e.tx = e.x;
+          e.ty = e.y;
+        }
       }
       e.cd -= dt;
       if (e.cd <= 0) {
@@ -391,26 +456,44 @@ export class Game {
 
   private onPlayerDeath(): void {
     this.lives--;
-    if (this.lives <= 0) {
-      this.state = "gameover";
-      this.onGameOver?.();
-      return;
+    this.spawnDeathFx(this.pos.x, this.pos.y); // 自機が大破する演出
+    this.pendingGameOver = this.lives <= 0;
+    this.state = "dying"; // 演出 → loop で gameover or respawning へ
+    this.interTimer = DEATH_FX;
+  }
+
+  // 自機の大破演出（中央の大きな爆発＋周囲に小爆発）。
+  private spawnDeathFx(x: number, y: number): void {
+    this.explosions.push({ x, y, t: 0, maxR: TANK_RADIUS * 2.6, life: DEATH_FX });
+    for (const [ox, oy] of [
+      [-18, -10],
+      [16, -14],
+      [-12, 16],
+      [18, 12],
+    ]) {
+      this.explosions.push({ x: x + ox, y: y + oy, t: 0, maxR: TANK_RADIUS * 1.3, life: DEATH_FX * 0.8 });
     }
-    // 残機が残っていれば、区切りポーズ後に自機だけ復活（倒した敵・壊した壁は維持）
-    this.state = "respawning";
-    this.interTimer = RESPAWN_PAUSE;
+  }
+
+  private ageExplosions(dt: number): void {
+    for (const ex of this.explosions) ex.t += dt;
+    this.explosions = this.explosions.filter((ex) => ex.t < ex.life);
   }
 
   // 自機だけリスポーンする。倒した敵は復活させないが、生き残った敵は定位置(home)へ戻す。
   private respawnPlayer(): void {
     this.pos = { ...this.spawn };
+    this.playerTrackFrom = { ...this.spawn };
     this.facing = -Math.PI / 2;
     this.bullets = [];
     this.mines = [];
     this.explosions = [];
+    // 跡・バッテン印は維持（完全リセットまで残す）
     for (const e of this.enemies) {
       e.x = e.hx;
       e.y = e.hy;
+      e.tx = e.hx;
+      e.ty = e.hy;
       e.cd = 0;
       e.facing = Math.PI / 2;
     }
@@ -423,7 +506,10 @@ export class Game {
     this.bullets = [];
     this.mines = [];
     this.explosions = [];
+    this.tracks = [];
+    this.deathMarks = [];
     this.pos = { ...this.spawn };
+    this.playerTrackFrom = { ...this.spawn };
     this.facing = -Math.PI / 2;
   }
 
@@ -433,6 +519,14 @@ export class Game {
     this.kills = { stationary: 0, mover: 0 };
     this.resetStage();
     this.state = "playing";
+  }
+
+  // 移動型の敵が進めない位置か：壁／自機／他の戦車と重なる。
+  private moverBlocked(px: number, py: number, self: Enemy): boolean {
+    const r2 = TANK_RADIUS * 2;
+    if (circleHitsSolid(this.stage, px, py, TANK_RADIUS)) return true;
+    if (this.dist(px, py, this.pos.x, this.pos.y) < r2) return true;
+    return this.enemies.some((o) => o !== self && this.dist(px, py, o.x, o.y) < r2);
   }
 
   private hitsEnemy(px: number, py: number): boolean {
@@ -455,12 +549,17 @@ export class Game {
     const ctx = this.ctx;
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     renderMap(ctx, this.stage);
+    this.drawTracks(ctx);
+    for (const dm of this.deathMarks) drawCross(ctx, dm.x, dm.y, dm.color);
     for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
       drawTank(ctx, e.x, e.y, e.pattern === "stationary" ? COLORS.stationary : COLORS.mover, e.facing);
     }
     this.drawAimLine(ctx);
-    drawTank(ctx, this.pos.x, this.pos.y, COLORS.p1, this.facing);
+    // 大破演出中・ゲームオーバー後は自機を描かない（破壊された）
+    if (this.state !== "dying" && this.state !== "gameover") {
+      drawTank(ctx, this.pos.x, this.pos.y, COLORS.p1, this.facing);
+    }
     for (const b of this.bullets) {
       drawBullet(ctx, b.x, b.y, Math.atan2(b.vy, b.vx), b.owner === 0 ? COLORS.bulletP : COLORS.bulletE);
     }
@@ -488,7 +587,7 @@ export class Game {
       ctx.fillText(this.stageLabel, ctx.canvas.width - 10, iy);
     }
 
-    if (this.state === "playing") return;
+    if (this.state === "playing" || this.state === "dying") return; // 大破演出中は中央表示なし
     if (this.state === "intro") {
       this.drawIntro(ctx);
       return;
@@ -498,36 +597,25 @@ export class Game {
       return;
     }
     if (this.state === "gameover") {
-      this.drawResult(ctx);
+      this.drawResult(ctx, "GAME OVER", "#ff8080");
       return;
     }
     // cleared
-    const cx = ctx.canvas.width / 2;
-    const cy = ctx.canvas.height / 2;
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(0, cy - 48, ctx.canvas.width, 96);
-    ctx.fillStyle = "#7CFC9B";
-    ctx.font = "bold 36px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("CLEAR!", cx, cy - 10);
-    ctx.fillStyle = "#fff";
-    ctx.font = "16px sans-serif";
-    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + 26);
+    this.drawResult(ctx, "CLEAR!", "#7CFC9B");
   }
 
-  // ゲームオーバー時のリザルト：色別の戦車アイコン×撃破数。
-  private drawResult(ctx: CanvasRenderingContext2D): void {
+  // クリア／ゲームオーバー時のリザルト：色別の戦車アイコン×撃破数。
+  private drawResult(ctx: CanvasRenderingContext2D, title: string, titleColor: string): void {
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-    ctx.fillStyle = "#ff8080";
+    ctx.fillStyle = titleColor;
     ctx.font = "bold 40px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("GAME OVER", cx, cy - 78);
+    ctx.fillText(title, cx, cy - 78);
 
     ctx.fillStyle = "#fff";
     ctx.font = "18px sans-serif";
@@ -623,6 +711,26 @@ export class Game {
     ctx.fillStyle = "#ccc";
     ctx.font = "14px sans-serif";
     ctx.fillText("まもなく開始…", cx, cy + 84);
+  }
+
+  // キャタピラ跡（薄い2本のトレッド線）。マップの上・戦車の下に描く。
+  private drawTracks(ctx: CanvasRenderingContext2D): void {
+    ctx.strokeStyle = "rgba(40,40,40,0.13)";
+    ctx.lineWidth = 3;
+    const half = TANK_RADIUS * 0.45;
+    const off = TANK_RADIUS * 0.55;
+    for (const t of this.tracks) {
+      const dx = Math.cos(t.a);
+      const dy = Math.sin(t.a);
+      for (const s of [-1, 1]) {
+        const ox = t.x + -dy * off * s;
+        const oy = t.y + dx * off * s;
+        ctx.beginPath();
+        ctx.moveTo(ox - dx * half, oy - dy * half);
+        ctx.lineTo(ox + dx * half, oy + dy * half);
+        ctx.stroke();
+      }
+    }
   }
 
   // 直進の照準線（反射は描かない）。最初の壁／場外／敵に当たる位置まで。

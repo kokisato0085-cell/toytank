@@ -44,4 +44,8 @@ if (sel) {
 const canvas = document.getElementById("game") as HTMLCanvasElement | null;
 if (!canvas) throw new Error("canvas#game が見つかりません");
 
-new Game(canvas, stage).start();
+const game = new Game(canvas, stage);
+game.start();
+
+const mineBtn = document.getElementById("btn-mine");
+if (mineBtn) mineBtn.addEventListener("click", () => game.layMine());

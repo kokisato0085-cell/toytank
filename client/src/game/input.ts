@@ -29,11 +29,13 @@ export class Input {
   private move = emptyStick();
   private aim = emptyStick();
   private fires: FireReq[] = [];
+  private mineReqs = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (e) => {
       this.keys.add(e.key.toLowerCase());
       if (e.key === " " && !e.repeat) this.fires.push({ dir: null });
+      if (e.key.toLowerCase() === "e" && !e.repeat) this.mineReqs++;
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
     canvas.addEventListener("pointerdown", this.onDown);
@@ -123,6 +125,16 @@ export class Input {
     const f = this.fires;
     this.fires = [];
     return f;
+  }
+
+  // 地雷設置要求（キーボード "e"／外部ボタン）。
+  requestMine(): void {
+    this.mineReqs++;
+  }
+  takeMines(): number {
+    const n = this.mineReqs;
+    this.mineReqs = 0;
+    return n;
   }
 
   // スティック／パッドのUI（デバイス座標。呼び出し側は transform をリセット済みのこと）。

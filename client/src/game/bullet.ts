@@ -1,7 +1,6 @@
 // 弾の物理（BasicDesign §6）。直進し、壁で反射（軸平行・反射回数上限）、
 // 壊せる壁に当たると破壊して消滅。命中（戦車）判定は呼び出し側（ゲームループ）で行う。
 
-import { TILE } from "../stage/types";
 import type { StageData } from "../stage/types";
 import { isSolidCell } from "./physics";
 import { BULLET_RADIUS } from "./constants";
@@ -16,8 +15,8 @@ export interface Bullet {
   age: number; // 経過秒
 }
 
-// 1ステップ進める。壁反射・壊せる壁破壊を処理する。弾が消滅すべきなら false を返す。
-// stage は壊せる壁の破壊で書き換わる。
+// 1ステップ進める。壁（鋼・壊せる壁とも）で反射する。弾が消滅すべきなら false を返す。
+// ※壊せる壁は弾では壊れない（地雷の爆発でのみ破壊）。命中（戦車・地雷）判定は呼び出し側。
 export function advanceBullet(stage: StageData, b: Bullet, dt: number): boolean {
   const cell = stage.grid.cell;
   let nx = b.x + b.vx * dt;
@@ -28,10 +27,6 @@ export function advanceBullet(stage: StageData, b: Bullet, dt: number): boolean 
     const col = Math.floor(nx / cell);
     const row = Math.floor(b.y / cell);
     if (isSolidCell(stage, col, row)) {
-      if (stage.tiles[row]?.[col] === TILE.BRICK) {
-        stage.tiles[row][col] = TILE.FLOOR;
-        return false; // 壊せる壁を壊して消滅
-      }
       if (b.bounces <= 0) return false; // 反射上限超過で消滅
       b.bounces--;
       b.vx = -b.vx;
@@ -43,10 +38,6 @@ export function advanceBullet(stage: StageData, b: Bullet, dt: number): boolean 
     const col = Math.floor(nx / cell);
     const row = Math.floor(ny / cell);
     if (isSolidCell(stage, col, row)) {
-      if (stage.tiles[row]?.[col] === TILE.BRICK) {
-        stage.tiles[row][col] = TILE.FLOOR;
-        return false;
-      }
       if (b.bounces <= 0) return false;
       b.bounces--;
       b.vy = -b.vy;

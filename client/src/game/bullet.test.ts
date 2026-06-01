@@ -35,12 +35,13 @@ describe("advanceBullet", () => {
     expect(advanceBullet(s, b, 0.1)).toBe(false);
   });
 
-  it("壊せる壁に当たると壁を壊して消滅", () => {
+  it("壊せる壁にも反射する（弾では壊れない）", () => {
     const s = freshStage();
     s.tiles[2][3] = TILE.BRICK; // col3,row2 に壊せる壁
     const b = bullet({ x: 160, y: 160, vx: 600, vy: 0, bounces: 1 }); // col2→col3へ
-    expect(advanceBullet(s, b, 0.1)).toBe(false);
-    expect(s.tiles[2][3]).toBe(TILE.FLOOR); // 破壊された
+    expect(advanceBullet(s, b, 0.1)).toBe(true); // 反射して生存
+    expect(b.vx).toBe(-600);
+    expect(s.tiles[2][3]).toBe(TILE.BRICK); // 壊れない
   });
 });
 

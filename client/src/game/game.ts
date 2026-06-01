@@ -2,8 +2,9 @@
 // 現ステップ：自機の移動（壁ずり・敵=障害物）＋射撃（右エイムパッド／タップ・即撃ち）、
 // 弾の跳弾・命中・フレンドリーファイア、直進の照準線。
 
+import { TILE } from "../stage/types";
 import type { EnemyPattern, StageData } from "../stage/types";
-import { COLORS, cellCenter, drawBullet, drawExplosion, drawTank, renderMap, worldSize } from "./render";
+import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
 import { circleHitsSolid, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { Input } from "./input";
@@ -13,6 +14,11 @@ import {
   EXPLOSION_LIFE,
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
+  MAX_MINES,
+  MINE_BLAST_CELLS,
+  MINE_BLAST_LIFE,
+  MINE_FUSE,
+  MINE_RADIUS,
   SELF_GRACE,
   STEP,
   TANK_RADIUS,
@@ -35,7 +41,9 @@ export class Game {
   private pos: { x: number; y: number };
   private enemies: Enemy[];
   private bullets: Bullet[] = [];
-  private explosions: { x: number; y: number; t: number }[] = [];
+  private mines: { x: number; y: number; t: number }[] = [];
+  private explosions: { x: number; y: number; t: number; maxR: number; life: number }[] = [];
+  private blastR: number;
   private facing = -Math.PI / 2; // 初期は上向き
   private acc = 0;
   private last = 0;
@@ -55,6 +63,7 @@ export class Game {
     this.spawn = cellCenter(stage, stage.players[0]);
     this.pos = { ...this.spawn };
     this.enemies = stage.enemies.map((e) => ({ ...cellCenter(stage, e), pattern: e.pattern }));
+    this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
   }
 
   start(): void {
@@ -99,8 +108,9 @@ export class Game {
 
     // 弾の更新と命中
     const alive: Bullet[] = [];
+    const mineHits: number[] = []; // 弾が当たった地雷（即起爆）
     for (const b of this.bullets) {
-      if (!advanceBullet(this.stage, b, dt)) continue; // 壁・壊せる壁で消滅
+      if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
       const ei = this.enemies.findIndex((e) => this.near(b.x, b.y, e.x, e.y));
       if (ei >= 0) {
         this.enemies.splice(ei, 1); // 敵を破壊（FF：弾は所有者を問わず当たる）
@@ -110,6 +120,12 @@ export class Game {
       if ((b.owner !== 0 || b.age >= SELF_GRACE) && this.near(b.x, b.y, this.pos.x, this.pos.y)) {
         this.respawn();
         return;
+      }
+      // 地雷への命中 → その地雷を即起爆（弾は消費）
+      const mi = this.mines.findIndex((m) => this.dist(b.x, b.y, m.x, m.y) < MINE_RADIUS + BULLET_RADIUS);
+      if (mi >= 0) {
+        mineHits.push(mi);
+        continue;
       }
       alive.push(b);
     }
@@ -123,16 +139,82 @@ export class Game {
         if (bulletsCollide(alive[i], alive[j])) {
           removed.add(i);
           removed.add(j);
-          this.explosions.push({ x: (alive[i].x + alive[j].x) / 2, y: (alive[i].y + alive[j].y) / 2, t: 0 });
+          this.explosions.push({
+            x: (alive[i].x + alive[j].x) / 2,
+            y: (alive[i].y + alive[j].y) / 2,
+            t: 0,
+            maxR: BULLET_RADIUS * 2,
+            life: EXPLOSION_LIFE,
+          });
           break;
         }
       }
     }
     this.bullets = alive.filter((_, k) => !removed.has(k));
 
+    // 弾が当たった地雷を即起爆（連鎖含む）
+    if (mineHits.length) this.detonate(mineHits);
+
+    // 地雷（設置要求の処理＋信管起爆）
+    for (let n = this.input.takeMines(); n > 0; n--) this.layMine();
+    this.updateMines(dt);
+
     // 爆発エフェクトの寿命管理
     for (const ex of this.explosions) ex.t += dt;
-    this.explosions = this.explosions.filter((ex) => ex.t < EXPLOSION_LIFE);
+    this.explosions = this.explosions.filter((ex) => ex.t < ex.life);
+  }
+
+  // 地雷を設置（最大 MAX_MINES）。外部ボタンからも呼べる。
+  layMine(): void {
+    if (this.mines.length >= MAX_MINES) return;
+    this.mines.push({ x: this.pos.x, y: this.pos.y, t: 0 });
+  }
+
+  private updateMines(dt: number): void {
+    const triggered: number[] = [];
+    this.mines.forEach((m, i) => {
+      m.t += dt;
+      if (m.t >= MINE_FUSE) triggered.push(i); // 信管満了で起爆（近接起爆は廃止・弾命中は別経路）
+    });
+    if (triggered.length) this.detonate(triggered);
+  }
+
+  // 起爆（誘爆の連鎖を含む）。範囲内の戦車を破壊・壊せる壁を破壊。
+  private detonate(seed: number[]): void {
+    const det = new Set<number>(seed);
+    const queue = [...seed];
+    let playerHit = false;
+    while (queue.length) {
+      const m = this.mines[queue.pop()!];
+      this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
+      this.destroyBricksNear(m.x, m.y, this.blastR);
+      if (this.dist(m.x, m.y, this.pos.x, this.pos.y) < this.blastR) playerHit = true;
+      this.enemies = this.enemies.filter((e) => this.dist(m.x, m.y, e.x, e.y) >= this.blastR);
+      this.mines.forEach((o, j) => {
+        if (!det.has(j) && this.dist(m.x, m.y, o.x, o.y) < this.blastR) {
+          det.add(j);
+          queue.push(j);
+        }
+      });
+    }
+    this.mines = this.mines.filter((_, j) => !det.has(j));
+    if (playerHit) this.respawn();
+  }
+
+  private destroyBricksNear(x: number, y: number, r: number): void {
+    const { cols, rows, cell } = this.stage.grid;
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (this.stage.tiles[row][col] !== TILE.BRICK) continue;
+        const cx = (col + 0.5) * cell;
+        const cy = (row + 0.5) * cell;
+        if (this.dist(x, y, cx, cy) < r) this.stage.tiles[row][col] = TILE.FLOOR;
+      }
+    }
+  }
+
+  private dist(ax: number, ay: number, bx: number, by: number): number {
+    return Math.hypot(ax - bx, ay - by);
   }
 
   private fire(dir: { x: number; y: number }): void {
@@ -175,6 +257,7 @@ export class Game {
     const ctx = this.ctx;
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     renderMap(ctx, this.stage);
+    for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
       drawTank(ctx, e.x, e.y, e.pattern === "stationary" ? COLORS.stationary : COLORS.mover, Math.PI / 2);
     }
@@ -183,7 +266,7 @@ export class Game {
     for (const b of this.bullets) {
       drawBullet(ctx, b.x, b.y, Math.atan2(b.vy, b.vx), b.owner === 0 ? COLORS.bulletP : COLORS.bulletE);
     }
-    for (const ex of this.explosions) drawExplosion(ctx, ex.x, ex.y, ex.t / EXPLOSION_LIFE);
+    for (const ex of this.explosions) drawExplosion(ctx, ex.x, ex.y, ex.t / ex.life, ex.maxR);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.input.drawSticks(ctx);

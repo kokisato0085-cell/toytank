@@ -2,7 +2,7 @@
 
 import { TILE } from "../stage/types";
 import type { CellPos, StageData } from "../stage/types";
-import { BULLET_RADIUS, TANK_RADIUS } from "./constants";
+import { BULLET_RADIUS, MINE_ARM, MINE_FUSE, MINE_RADIUS, MINE_WARN, TANK_RADIUS } from "./constants";
 
 export const COLORS = {
   floor: "#e8e6df",
@@ -92,13 +92,50 @@ export function drawBullet(ctx: CanvasRenderingContext2D, x: number, y: number, 
   ctx.restore();
 }
 
-// 弾相殺の小爆発。progress は 0→1（0で発生、1で消滅）。
-export function drawExplosion(ctx: CanvasRenderingContext2D, x: number, y: number, progress: number): void {
+// 爆発エフェクト。progress は 0→1（0で発生、1で消滅）、maxR は最大半径。
+export function drawExplosion(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  progress: number,
+  maxR: number,
+): void {
   ctx.save();
   ctx.globalAlpha = 1 - progress;
   ctx.fillStyle = COLORS.explosion;
   ctx.beginPath();
-  ctx.arc(x, y, 4 + progress * 12, 0, Math.PI * 2);
+  ctx.arc(x, y, maxR * (0.4 + 0.6 * progress), 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+}
+
+// 地雷を描く。t は設置からの経過秒。起爆 MINE_WARN 秒前から光＆オーラが点滅する。
+export function drawMine(ctx: CanvasRenderingContext2D, x: number, y: number, t: number): void {
+  const armed = t >= MINE_ARM;
+  const warning = MINE_FUSE - t <= MINE_WARN;
+  const blink = Math.abs(Math.sin(t * 12)); // 0..1 の速い点滅
+
+  // 警告中：膨張・点滅するオーラ
+  if (warning) {
+    ctx.save();
+    ctx.globalAlpha = 0.2 + 0.5 * blink;
+    ctx.fillStyle = "#ffd23a";
+    ctx.beginPath();
+    ctx.arc(x, y, MINE_RADIUS + 6 + blink * 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 本体
+  ctx.fillStyle = "#3a3a3a";
+  ctx.beginPath();
+  ctx.arc(x, y, MINE_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 中心の光。警告中は赤↔白で点滅、起動後は赤、未起動は灰。
+  const center = warning ? (blink > 0.5 ? "#fff2a0" : "#e33") : armed ? "#e33" : "#999";
+  ctx.fillStyle = center;
+  ctx.beginPath();
+  ctx.arc(x, y, MINE_RADIUS * 0.4, 0, Math.PI * 2);
+  ctx.fill();
 }

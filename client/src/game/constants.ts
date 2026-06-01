@@ -9,3 +9,11 @@ export const MAX_BOUNCES = 1; // 弾の反射上限
 export const MAX_ACTIVE_BULLETS = 5; // 戦車ごとの画面内同時弾数
 export const SELF_GRACE = 0.15; // 発射後に自機へ当たらない猶予(秒)
 export const EXPLOSION_LIFE = 0.25; // 弾相殺の爆発エフェクトの寿命(秒)
+
+export const MAX_MINES = 2; // 同時設置数
+export const MINE_RADIUS = 18; // 地雷の見た目・被弾判定の半径(px)
+export const MINE_ARM = 0.5; // 起動猶予(秒)。以後は中心が赤く点灯
+export const MINE_FUSE = 6; // 信管(秒)。これで自動起爆
+export const MINE_WARN = 2; // 起爆何秒前から警告点滅するか
+export const MINE_BLAST_CELLS = 2.4; // 爆発半径 = この係数 × cell
+export const MINE_BLAST_LIFE = 0.4; // 地雷の爆発エフェクトの寿命(秒)

@@ -4,6 +4,7 @@
 
 import { TILE } from "../stage/types";
 import type { CellPos, EnemyPattern, EnemySpec, StageData, TileValue } from "../stage/types";
+import { ENEMY_TYPES, ENEMY_TYPE_KEYS } from "../stage/enemyTypes";
 import { createEmptyStage, fillBorderSteel, resizeStage } from "../stage/edit";
 import { validateStage } from "../stage/validate";
 import { listSavedStages, loadCampaign, saveCampaign } from "../game/stageStore";
@@ -25,8 +26,7 @@ type Tool =
   | "paint-hole"
   | "place-p1"
   | "place-p2"
-  | "place-enemy-stationary"
-  | "place-enemy-mover"
+  | "place-enemy"
   | "erase";
 
 const VIEW = 32; // 表示上の1マスのピクセル数（編集用。ゲーム内の cell とは独立）。
@@ -78,6 +78,13 @@ const jsonText = $<HTMLTextAreaElement>("json-text");
 const selSaved = $<HTMLSelectElement>("sel-saved");
 const selCampaignAdd = $<HTMLSelectElement>("sel-campaign-add");
 const campaignList = $<HTMLOListElement>("campaign-list");
+const selEnemyType = $<HTMLSelectElement>("enemy-type");
+for (const k of ENEMY_TYPE_KEYS) {
+  const o = document.createElement("option");
+  o.value = k;
+  o.textContent = ENEMY_TYPES[k].name;
+  selEnemyType.appendChild(o);
+}
 
 const LS_PREFIX = "toytank.stage.";
 
@@ -125,11 +132,8 @@ function applyAt(col: number, row: number): void {
       removeSpawnAt(col, row);
       state.p2 = { col, row };
       break;
-    case "place-enemy-stationary":
-      placeEnemy(col, row, "stationary");
-      break;
-    case "place-enemy-mover":
-      placeEnemy(col, row, "mover");
+    case "place-enemy":
+      placeEnemy(col, row, selEnemyType.value);
       break;
     case "erase":
       setTile(col, row, TILE.FLOOR);
@@ -182,8 +186,7 @@ function render(): void {
   if (state.p1) drawDisc(state.p1, COLORS.p1, "1");
   if (state.p2) drawDisc(state.p2, COLORS.p2, "2");
   for (const e of state.enemies) {
-    if (e.pattern === "stationary") drawSquare(e, COLORS.stationary);
-    else drawTriangle(e, COLORS.mover);
+    drawSquare(e, ENEMY_TYPES[e.pattern]?.color ?? "#c0392b");
   }
 }
 
@@ -210,17 +213,6 @@ function drawSquare(p: CellPos, color: string): void {
   ctx.fillStyle = color;
   const s = VIEW * 0.62;
   ctx.fillRect(cx(p.col) - s / 2, cy(p.row) - s / 2, s, s);
-}
-
-function drawTriangle(p: CellPos, color: string): void {
-  ctx.fillStyle = color;
-  const r = VIEW * 0.4;
-  ctx.beginPath();
-  ctx.moveTo(cx(p.col), cy(p.row) - r);
-  ctx.lineTo(cx(p.col) + r, cy(p.row) + r);
-  ctx.lineTo(cx(p.col) - r, cy(p.row) + r);
-  ctx.closePath();
-  ctx.fill();
 }
 
 // ---- 検証メッセージ ----

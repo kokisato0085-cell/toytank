@@ -26,8 +26,10 @@ export function sampleStage(): StageData {
     { col: 3, row: 12 },
   ];
   s.enemies = [
-    { col: 16, row: 2, pattern: "stationary" },
-    { col: 10, row: 11, pattern: "mover" },
+    { col: 16, row: 2, pattern: "wood" },
+    { col: 10, row: 11, pattern: "gray" },
+    { col: 5, row: 3, pattern: "darkgreen" },
+    { col: 17, row: 11, pattern: "yellowgreen" },
   ];
   return s;
 }

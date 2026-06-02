@@ -11,8 +11,8 @@ export const TILE = {
 
 export type TileValue = 0 | 1 | 2 | 3;
 
-// 敵の行動パターン（BasicDesign §10）。
-export type EnemyPattern = "stationary" | "mover";
+// 敵タイプのキー（enemyTypes.ts のレジストリを参照）。
+export type EnemyPattern = string;
 
 export interface Grid {
   cols: number; // 横のマス数

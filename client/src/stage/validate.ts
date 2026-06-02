@@ -2,6 +2,7 @@
 // エラーメッセージの配列を返す（空配列＝妥当）。エディタの警告表示とゲーム読込時の弾きに使う。
 
 import type { StageData } from "./types";
+import { ENEMY_TYPE_KEYS } from "./enemyTypes";
 
 function inBounds(col: number, row: number, cols: number, rows: number): boolean {
   return col >= 0 && col < cols && row >= 0 && row < rows;
@@ -64,8 +65,8 @@ export function validateStage(s: StageData): string[] {
 
   s.players.forEach((p, i) => checkSpawn(p.col, p.row, `P${i + 1}`));
   s.enemies.forEach((e, i) => {
-    if (e.pattern !== "stationary" && e.pattern !== "mover") {
-      errors.push(`敵${i + 1} の pattern(${e.pattern})が不正です（stationary/mover）`);
+    if (!ENEMY_TYPE_KEYS.includes(e.pattern)) {
+      errors.push(`敵${i + 1} の pattern(${e.pattern})が不正です（未知の敵タイプ）`);
     }
     checkSpawn(e.col, e.row, `敵${i + 1}`);
   });

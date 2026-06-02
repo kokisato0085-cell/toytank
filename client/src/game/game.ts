@@ -3,11 +3,12 @@
 // 弾の跳弾・命中・フレンドリーファイア、直進の照準線。
 
 import { TILE } from "../stage/types";
-import type { EnemyPattern, StageData, TileValue } from "../stage/types";
+import type { StageData, TileValue } from "../stage/types";
+import { ENEMY_TYPES, getEnemyType, type EnemyType } from "../stage/enemyTypes";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
 import { circleHitsSolid, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
-import { blastReaches, computeAimDir } from "./ai";
+import { blastReaches, computeAimDir, lineClear } from "./ai";
 import { Input } from "./input";
 import {
   BEHAVIOR_MAX,
@@ -15,9 +16,7 @@ import {
   BULLET_RADIUS,
   BULLET_SPEED,
   DEATH_FX,
-  ENEMY_AIM_JITTER,
-  ENEMY_COOLDOWN_MOVER,
-  ENEMY_COOLDOWN_STATIONARY,
+  ENEMY_CLOSE,
   ENEMY_NEAR,
   EXPLOSION_LIFE,
   NEAR_FIRE_MULT,
@@ -30,7 +29,6 @@ import {
   MINE_RADIUS,
   INTRO_PAUSE,
   MAX_TRACKS,
-  MOVER_SPEED,
   RESPAWN_PAUSE,
   SELF_GRACE,
   SOLO_LIVES,
@@ -42,7 +40,7 @@ import {
 
 type GameState = "intro" | "playing" | "dying" | "respawning" | "cleared" | "gameover";
 
-type EnemyBehavior = "combat" | "retreat" | "wander";
+type RuntimeBehavior = "combat" | "retreat" | "wander";
 
 interface Enemy {
   x: number;
@@ -51,13 +49,16 @@ interface Enemy {
   hy: number;
   tx: number; // 直近のキャタピラ跡を刻んだ位置
   ty: number;
-  pattern: EnemyPattern;
+  type: EnemyType; // タイプ設定（色・速度・射撃など）
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
-  behavior: EnemyBehavior; // 行動軸（移動型のみ使用）
+  behavior: RuntimeBehavior; // 現在の行動軸（移動するタイプのみ使用）
   behaviorTimer: number; // 次に行動軸を切り替えるまでの秒
   wanderX: number; // 無目的移動の向き
   wanderY: number;
+  stuckCol: number; // 滞留判定：直近のマス
+  stuckRow: number;
+  stuckTimer: number; // 同じマスに留まっている秒
 }
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
@@ -115,13 +116,16 @@ function makeEnemies(stage: StageData): Enemy[] {
       hy: c.y,
       tx: c.x,
       ty: c.y,
-      pattern: e.pattern,
+      type: getEnemyType(e.pattern),
       cd: 0,
       facing: Math.PI / 2,
       behavior: "combat",
       behaviorTimer: 0,
       wanderX: 0,
       wanderY: 0,
+      stuckCol: Math.floor(c.x / stage.grid.cell),
+      stuckRow: Math.floor(c.y / stage.grid.cell),
+      stuckTimer: 0,
     };
   });
 }
@@ -145,7 +149,7 @@ export class Game {
   private interTimer = 0; // 区切りポーズ／開始画面／大破演出の残り秒
   private pendingGameOver = false; // 大破演出のあとゲームオーバーへ進むか
   private stageLabel = ""; // 「ステージN」表示用
-  private kills: Record<EnemyPattern, number> = { stationary: 0, mover: 0 }; // 種類別の撃破数（リザルト用）
+  private kills: Record<string, number> = {}; // タイプ別の撃破数（リザルト用）
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
   private deathMarks: { x: number; y: number; color: string }[] = []; // 撃破バッテン印
   private playerTrackFrom = { x: 0, y: 0 }; // 自機の直近の跡位置
@@ -187,7 +191,7 @@ export class Game {
     this.fit();
     if (resetLives) {
       this.lives = SOLO_LIVES;
-      this.kills = { stationary: 0, mover: 0 }; // 新しいランの開始
+      this.kills = {}; // 新しいランの開始
     }
     this.resetStage();
     this.state = "playing";
@@ -417,7 +421,7 @@ export class Game {
 
   // 敵の撃破を記録（撃破数の集計＋大破演出＋やられた座標に白いバッテン印）。
   private markKill(e: Enemy): void {
-    this.kills[e.pattern]++;
+    this.kills[e.type.key] = (this.kills[e.type.key] ?? 0) + 1;
     this.spawnDeathFx(e.x, e.y); // 敵も大破演出
     this.deathMarks.push({ x: e.x, y: e.y, color: "#ffffff" });
   }
@@ -427,25 +431,33 @@ export class Game {
     this.facing = Math.atan2(dir.y, dir.x);
   }
 
-  // owner: 0=自機, 1=敵。砲口（半径の外側）から発射する。
-  private spawnBullet(ox: number, oy: number, dir: { x: number; y: number }, owner: number): void {
+  // owner: 0=自機, 1=敵。砲口（半径の外側）から発射する。弾速・反射回数は指定可。
+  private spawnBullet(
+    ox: number,
+    oy: number,
+    dir: { x: number; y: number },
+    owner: number,
+    speed = BULLET_SPEED,
+    bounces = MAX_BOUNCES,
+  ): void {
     const off = TANK_RADIUS + BULLET_RADIUS + 2;
     this.bullets.push({
       x: ox + dir.x * off,
       y: oy + dir.y * off,
-      vx: dir.x * BULLET_SPEED,
-      vy: dir.y * BULLET_SPEED,
-      bounces: MAX_BOUNCES,
+      vx: dir.x * speed,
+      vy: dir.y * speed,
+      bounces,
       owner,
       age: 0,
     });
   }
 
-  // 敵の移動（移動型は自機へ接近）と射撃（直射／バンクショット）。
-  // 移動型の行動軸を切り替える（戦闘＞無目的＞退避の重み）。
+  // 行動軸をタイプの性格に応じた重みで切り替える。
   private pickBehavior(e: Enemy): void {
     const r = Math.random();
-    e.behavior = r < 0.6 ? "combat" : r < 0.9 ? "wander" : "retreat";
+    if (e.type.behavior === "approach") e.behavior = r < 0.8 ? "combat" : "wander";
+    else if (e.type.behavior === "kite") e.behavior = r < 0.5 ? "retreat" : r < 0.9 ? "wander" : "combat";
+    else e.behavior = r < 0.6 ? "combat" : r < 0.9 ? "wander" : "retreat"; // balanced
     e.behaviorTimer = BEHAVIOR_MIN + Math.random() * (BEHAVIOR_MAX - BEHAVIOR_MIN);
     if (e.behavior === "wander") {
       const a = Math.random() * Math.PI * 2;
@@ -456,24 +468,30 @@ export class Game {
 
   private updateEnemies(dt: number): void {
     for (const e of this.enemies) {
+      const t = e.type;
       const near = this.dist(e.x, e.y, this.pos.x, this.pos.y) < ENEMY_NEAR;
 
-      // 移動（移動型のみ）：行動軸＝戦闘(接近)/退避(離れる)/無目的(徘徊) をランダム切替
-      if (e.pattern === "mover") {
+      // 移動（speed>0 のタイプのみ）：行動軸＝戦闘/退避/無目的をランダム切替
+      if (t.speed > 0) {
         e.behaviorTimer -= dt;
         if (e.behaviorTimer <= 0) this.pickBehavior(e);
         const dx = this.pos.x - e.x;
         const dy = this.pos.y - e.y;
-        // 退避は自機が近いときだけ（遠いとマップ端へ逃げてしまうので戦闘に）
+        const d = Math.hypot(dx, dy);
         let behavior = e.behavior;
-        if (behavior === "retreat" && Math.hypot(dx, dy) > ENEMY_NEAR * 1.5) behavior = "combat";
+        if (behavior === "combat") {
+          // 壁越しには突っ込まない：射線が壁で切れていて、かなり近くなければ守備的（退避）に
+          if (d > ENEMY_CLOSE && !lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) behavior = "retreat";
+        } else if (behavior === "retreat" && d > ENEMY_NEAR * 1.5) {
+          behavior = "wander"; // 遠すぎる退避は徘徊に（端へ逃げ続けない）
+        }
         let desired: number;
         if (behavior === "combat") desired = Math.atan2(dy, dx);
         else if (behavior === "retreat") desired = Math.atan2(-dy, -dx);
         else desired = Math.atan2(e.wanderY, e.wanderX);
 
         // 壁を擦らず回り込む：希望方向から少しずつ角度をずらし、通れる向きへ進む
-        const step = MOVER_SPEED * dt;
+        const step = t.speed * dt;
         let moved = false;
         let moveAngle = desired;
         for (const off of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6]) {
@@ -493,27 +511,48 @@ export class Game {
           e.wanderX = Math.cos(a);
           e.wanderY = Math.sin(a);
         }
-        // 履帯の跡は移動方向で刻む
         if (moved && this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
-          this.addTrack(e.x, e.y, moveAngle);
+          this.addTrack(e.x, e.y, moveAngle); // 履帯は移動方向で刻む
           e.tx = e.x;
           e.ty = e.y;
         }
-        // 砲塔は常に自機の方を向く（壁回避でビクビクしないよう移動方向とは分離）
-        e.facing = Math.atan2(this.pos.y - e.y, this.pos.x - e.x);
+        // 同じマスに2秒以上留まったら強制的に無目的へ（隅でのハマり防止）
+        const cell = this.stage.grid.cell;
+        const cc = Math.floor(e.x / cell);
+        const cr = Math.floor(e.y / cell);
+        if (cc === e.stuckCol && cr === e.stuckRow) {
+          e.stuckTimer += dt;
+          if (e.stuckTimer >= 2) {
+            e.behavior = "wander";
+            const a = Math.random() * Math.PI * 2;
+            e.wanderX = Math.cos(a);
+            e.wanderY = Math.sin(a);
+            e.behaviorTimer = BEHAVIOR_MIN + Math.random() * (BEHAVIOR_MAX - BEHAVIOR_MIN);
+            e.stuckTimer = 0;
+          }
+        } else {
+          e.stuckCol = cc;
+          e.stuckRow = cr;
+          e.stuckTimer = 0;
+        }
       }
+      // 砲塔は常に自機の方を向く（壁回避でビクビクしないよう移動方向とは分離）
+      e.facing = Math.atan2(this.pos.y - e.y, this.pos.x - e.x);
 
-      // 射撃（両タイプ）：自機が近いほど発射間隔を短く
+      // 射撃：自機が近いほど発射間隔を短く。タイプ設定（バンク/精度/弾速/反射/連射）に従う
       e.cd -= dt;
       if (e.cd <= 0) {
-        const isStationary = e.pattern === "stationary";
-        let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, isStationary);
+        let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
         if (dir) {
-          if (!isStationary) dir = rotate(dir, (Math.random() * 2 - 1) * ENEMY_AIM_JITTER);
-          this.spawnBullet(e.x, e.y, dir, 1);
-          e.facing = Math.atan2(dir.y, dir.x);
-          const base = isStationary ? ENEMY_COOLDOWN_STATIONARY : ENEMY_COOLDOWN_MOVER;
-          e.cd = near ? base * NEAR_FIRE_MULT : base;
+          if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
+          const baseAngle = Math.atan2(dir.y, dir.x);
+          const spread = 0.14;
+          for (let i = 0; i < t.bullets; i++) {
+            const a = baseAngle + (i - (t.bullets - 1) / 2) * spread; // 扇状の同時発射
+            this.spawnBullet(e.x, e.y, { x: Math.cos(a), y: Math.sin(a) }, 1, t.bulletSpeed, t.bounces);
+          }
+          e.facing = baseAngle;
+          e.cd = near ? t.fireInterval * NEAR_FIRE_MULT : t.fireInterval;
         } else {
           e.cd = 0.3; // 射線が無いときは少し待って再試行
         }
@@ -583,7 +622,7 @@ export class Game {
   // 最初からやり直す（残機リセット）。クリア／ゲームオーバー後に呼ぶ。
   restart(): void {
     this.lives = SOLO_LIVES;
-    this.kills = { stationary: 0, mover: 0 };
+    this.kills = {};
     this.resetStage();
     this.state = "playing";
   }
@@ -620,7 +659,7 @@ export class Game {
     for (const dm of this.deathMarks) drawCross(ctx, dm.x, dm.y, dm.color);
     for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
-      drawTank(ctx, e.x, e.y, e.pattern === "stationary" ? COLORS.stationary : COLORS.mover, e.facing);
+      drawTank(ctx, e.x, e.y, e.type.color, e.facing);
     }
     this.drawAimLine(ctx);
     // 大破演出中・ゲームオーバー後は自機を描かない（破壊された）
@@ -688,10 +727,7 @@ export class Game {
     ctx.font = "18px sans-serif";
     ctx.fillText("撃破数", cx, cy - 34);
 
-    const entries: { color: string; count: number }[] = [
-      { color: COLORS.stationary, count: this.kills.stationary },
-      { color: COLORS.mover, count: this.kills.mover },
-    ];
+    const entries = Object.keys(this.kills).map((k) => ({ color: ENEMY_TYPES[k].color, count: this.kills[k] }));
     const ew = 120;
     let x = cx - (entries.length * ew) / 2 + ew / 2;
     ctx.font = "24px sans-serif";
@@ -747,12 +783,10 @@ export class Game {
     ctx.font = "bold 40px sans-serif";
     ctx.fillText(this.stageLabel, cx, cy - 70);
 
-    // 出現する敵（パターン＝色 ごとの数）
-    const stat = this.enemies.filter((e) => e.pattern === "stationary").length;
-    const mov = this.enemies.filter((e) => e.pattern === "mover").length;
-    const entries: { color: string; count: number }[] = [];
-    if (stat > 0) entries.push({ color: COLORS.stationary, count: stat });
-    if (mov > 0) entries.push({ color: COLORS.mover, count: mov });
+    // 出現する敵（タイプ＝色 ごとの数）
+    const counts: Record<string, number> = {};
+    for (const e of this.enemies) counts[e.type.key] = (counts[e.type.key] ?? 0) + 1;
+    const entries = Object.keys(counts).map((k) => ({ color: ENEMY_TYPES[k].color, count: counts[k] }));
     const ew = 90;
     let x = cx - (entries.length * ew) / 2 + ew / 2;
     ctx.font = "22px sans-serif";

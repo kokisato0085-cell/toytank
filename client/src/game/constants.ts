@@ -22,6 +22,10 @@ export const ENEMY_COOLDOWN_MOVER = 1.8; // 移動型の発射間隔(秒)
 export const ENEMY_COOLDOWN_STATIONARY = 2.6; // 静止型の発射間隔(秒)
 export const ENEMY_AIM_JITTER = 0.12; // 移動型の照準のばらつき(rad・約7°)
 export const MOVER_SPEED = 90; // 移動型の敵の速度(px/s)
+export const ENEMY_NEAR = 280; // この距離内に自機がいると攻撃が激しくなる(px)
+export const NEAR_FIRE_MULT = 0.55; // 近接時の発射間隔倍率（短く＝速く撃つ）
+export const BEHAVIOR_MIN = 1.2; // 行動軸（戦闘/退避/無目的）の切替間隔の最小(秒)
+export const BEHAVIOR_MAX = 2.8; // 同・最大(秒)
 
 export const SOLO_LIVES = 3; // ソロの残機
 

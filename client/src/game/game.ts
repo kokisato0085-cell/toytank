@@ -10,13 +10,17 @@ import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir } from "./ai";
 import { Input } from "./input";
 import {
+  BEHAVIOR_MAX,
+  BEHAVIOR_MIN,
   BULLET_RADIUS,
   BULLET_SPEED,
   DEATH_FX,
   ENEMY_AIM_JITTER,
   ENEMY_COOLDOWN_MOVER,
   ENEMY_COOLDOWN_STATIONARY,
+  ENEMY_NEAR,
   EXPLOSION_LIFE,
+  NEAR_FIRE_MULT,
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
   MAX_MINES,
@@ -38,6 +42,8 @@ import {
 
 type GameState = "intro" | "playing" | "dying" | "respawning" | "cleared" | "gameover";
 
+type EnemyBehavior = "combat" | "retreat" | "wander";
+
 interface Enemy {
   x: number;
   y: number;
@@ -48,6 +54,10 @@ interface Enemy {
   pattern: EnemyPattern;
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
+  behavior: EnemyBehavior; // 行動軸（移動型のみ使用）
+  behaviorTimer: number; // 次に行動軸を切り替えるまでの秒
+  wanderX: number; // 無目的移動の向き
+  wanderY: number;
 }
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
@@ -98,7 +108,21 @@ function drawCross(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
 function makeEnemies(stage: StageData): Enemy[] {
   return stage.enemies.map((e) => {
     const c = cellCenter(stage, e);
-    return { x: c.x, y: c.y, hx: c.x, hy: c.y, tx: c.x, ty: c.y, pattern: e.pattern, cd: 0, facing: Math.PI / 2 };
+    return {
+      x: c.x,
+      y: c.y,
+      hx: c.x,
+      hy: c.y,
+      tx: c.x,
+      ty: c.y,
+      pattern: e.pattern,
+      cd: 0,
+      facing: Math.PI / 2,
+      behavior: "combat",
+      behaviorTimer: 0,
+      wanderX: 0,
+      wanderY: 0,
+    };
   });
 }
 
@@ -418,35 +442,78 @@ export class Game {
   }
 
   // 敵の移動（移動型は自機へ接近）と射撃（直射／バンクショット）。
+  // 移動型の行動軸を切り替える（戦闘＞無目的＞退避の重み）。
+  private pickBehavior(e: Enemy): void {
+    const r = Math.random();
+    e.behavior = r < 0.6 ? "combat" : r < 0.9 ? "wander" : "retreat";
+    e.behaviorTimer = BEHAVIOR_MIN + Math.random() * (BEHAVIOR_MAX - BEHAVIOR_MIN);
+    if (e.behavior === "wander") {
+      const a = Math.random() * Math.PI * 2;
+      e.wanderX = Math.cos(a);
+      e.wanderY = Math.sin(a);
+    }
+  }
+
   private updateEnemies(dt: number): void {
     for (const e of this.enemies) {
+      const near = this.dist(e.x, e.y, this.pos.x, this.pos.y) < ENEMY_NEAR;
+
+      // 移動（移動型のみ）：行動軸＝戦闘(接近)/退避(離れる)/無目的(徘徊) をランダム切替
       if (e.pattern === "mover") {
+        e.behaviorTimer -= dt;
+        if (e.behaviorTimer <= 0) this.pickBehavior(e);
         const dx = this.pos.x - e.x;
         const dy = this.pos.y - e.y;
-        const m = Math.hypot(dx, dy) || 1;
-        const nx = e.x + (dx / m) * MOVER_SPEED * dt;
-        const ny = e.y + (dy / m) * MOVER_SPEED * dt;
-        const res = slide(e.x, e.y, nx, ny, (px, py) => this.moverBlocked(px, py, e));
-        e.x = res.x;
-        e.y = res.y;
-        e.facing = Math.atan2(dy, dx);
-        if (this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
-          this.addTrack(e.x, e.y, e.facing);
+        // 退避は自機が近いときだけ（遠いとマップ端へ逃げてしまうので戦闘に）
+        let behavior = e.behavior;
+        if (behavior === "retreat" && Math.hypot(dx, dy) > ENEMY_NEAR * 1.5) behavior = "combat";
+        let desired: number;
+        if (behavior === "combat") desired = Math.atan2(dy, dx);
+        else if (behavior === "retreat") desired = Math.atan2(-dy, -dx);
+        else desired = Math.atan2(e.wanderY, e.wanderX);
+
+        // 壁を擦らず回り込む：希望方向から少しずつ角度をずらし、通れる向きへ進む
+        const step = MOVER_SPEED * dt;
+        let moved = false;
+        let moveAngle = desired;
+        for (const off of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6]) {
+          const a = desired + off;
+          const tx = e.x + Math.cos(a) * step;
+          const ty = e.y + Math.sin(a) * step;
+          if (!this.moverBlocked(tx, ty, e)) {
+            e.x = tx;
+            e.y = ty;
+            moveAngle = a;
+            moved = true;
+            break;
+          }
+        }
+        if (!moved && behavior === "wander") {
+          const a = Math.random() * Math.PI * 2;
+          e.wanderX = Math.cos(a);
+          e.wanderY = Math.sin(a);
+        }
+        // 履帯の跡は移動方向で刻む
+        if (moved && this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
+          this.addTrack(e.x, e.y, moveAngle);
           e.tx = e.x;
           e.ty = e.y;
         }
+        // 砲塔は常に自機の方を向く（壁回避でビクビクしないよう移動方向とは分離）
+        e.facing = Math.atan2(this.pos.y - e.y, this.pos.x - e.x);
       }
+
+      // 射撃（両タイプ）：自機が近いほど発射間隔を短く
       e.cd -= dt;
       if (e.cd <= 0) {
         const isStationary = e.pattern === "stationary";
-        // 移動型はバンクショットなし（直射のみ）。
         let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, isStationary);
         if (dir) {
-          // 移動型は照準にばらつき（精度低め）。
           if (!isStationary) dir = rotate(dir, (Math.random() * 2 - 1) * ENEMY_AIM_JITTER);
           this.spawnBullet(e.x, e.y, dir, 1);
           e.facing = Math.atan2(dir.y, dir.x);
-          e.cd = isStationary ? ENEMY_COOLDOWN_STATIONARY : ENEMY_COOLDOWN_MOVER;
+          const base = isStationary ? ENEMY_COOLDOWN_STATIONARY : ENEMY_COOLDOWN_MOVER;
+          e.cd = near ? base * NEAR_FIRE_MULT : base;
         } else {
           e.cd = 0.3; // 射線が無いときは少し待って再試行
         }

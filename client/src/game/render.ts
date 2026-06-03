@@ -3,7 +3,7 @@
 import { TILE } from "../stage/types";
 import type { CellPos, StageData } from "../stage/types";
 import { BULLET_RADIUS, MINE_ARM, MINE_FUSE, MINE_RADIUS, MINE_WARN, TANK_RADIUS } from "./constants";
-import { sprite, spriteReady, tinted } from "./sprites";
+import { drawCell, drawStretched, spriteReady, tinted } from "./sprites";
 
 export const COLORS = {
   floor: "#e8e6df",
@@ -34,31 +34,33 @@ export function cellCenter(stage: StageData, p: CellPos): { x: number; y: number
   return { x: (p.col + 0.5) * cell, y: (p.row + 0.5) * cell };
 }
 
-// マップ（タイル＋グリッド線）を描く。
+// マップを描く。床は全面1枚で継ぎ目なく、壁・穴はマスごと。
 export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void {
   const { cols, rows, cell } = stage.grid;
+  const W = cols * cell;
+  const H = rows * cell;
+
+  // 1) ベースを床色で塗る（透過部の黒抜け／前フレーム残像を消す）
+  ctx.fillStyle = COLORS.floor;
+  ctx.fillRect(0, 0, W, H);
+  // 2) 床テクスチャを全面に1枚で敷く（継ぎ目なし）
+  const hasFloor = drawStretched(ctx, "floor", 0, 0, W, H);
+
+  // 3) 壁・穴はマスごと（角丸は下の床が透ける）
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
+      const v = stage.tiles[r][c];
+      if (v === TILE.FLOOR) continue;
       const x = c * cell;
       const y = r * cell;
-      const v = stage.tiles[r][c];
-      // 床ベース（全セル）
-      if (spriteReady("floor")) ctx.drawImage(sprite("floor"), x, y, cell, cell);
-      else {
-        ctx.fillStyle = COLORS.floor;
-        ctx.fillRect(x, y, cell, cell);
-      }
-      // 上に重ねる
       if (v === TILE.STEEL || v === TILE.BRICK) {
         const nm = v === TILE.STEEL ? "steel" : "brick";
-        if (spriteReady(nm)) ctx.drawImage(sprite(nm), x, y, cell, cell);
-        else {
+        if (!drawCell(ctx, nm, x, y, cell)) {
           ctx.fillStyle = v === TILE.STEEL ? COLORS.steel : COLORS.brick;
           ctx.fillRect(x, y, cell, cell);
         }
       } else if (v === TILE.HOLE) {
-        if (spriteReady("hole")) ctx.drawImage(sprite("hole"), x, y, cell, cell);
-        else {
+        if (!drawCell(ctx, "hole", x, y, cell)) {
           ctx.fillStyle = COLORS.hole;
           ctx.beginPath();
           ctx.arc(x + cell / 2, y + cell / 2, cell / 2, 0, Math.PI * 2);
@@ -67,19 +69,23 @@ export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void
       }
     }
   }
-  ctx.strokeStyle = COLORS.line;
-  ctx.lineWidth = 1;
-  for (let c = 0; c <= cols; c++) {
-    ctx.beginPath();
-    ctx.moveTo(c * cell, 0);
-    ctx.lineTo(c * cell, rows * cell);
-    ctx.stroke();
-  }
-  for (let r = 0; r <= rows; r++) {
-    ctx.beginPath();
-    ctx.moveTo(0, r * cell);
-    ctx.lineTo(cols * cell, r * cell);
-    ctx.stroke();
+
+  // 4) 床テクスチャが無い（図形フォールバック）ときだけグリッド線
+  if (!hasFloor) {
+    ctx.strokeStyle = COLORS.line;
+    ctx.lineWidth = 1;
+    for (let c = 0; c <= cols; c++) {
+      ctx.beginPath();
+      ctx.moveTo(c * cell, 0);
+      ctx.lineTo(c * cell, H);
+      ctx.stroke();
+    }
+    for (let r = 0; r <= rows; r++) {
+      ctx.beginPath();
+      ctx.moveTo(0, r * cell);
+      ctx.lineTo(W, r * cell);
+      ctx.stroke();
+    }
   }
 }
 

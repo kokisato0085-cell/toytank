@@ -1,8 +1,10 @@
 // 敵AIの照準計算（BasicDesign §10）。
-// 直射が通れば直接狙う。遮蔽で通らなければ、場外4面での1回反射（バンクショット）を試す。
+// 直射が通れば直接狙う。遮蔽で通らなければ、壁（外壁・内壁すべて）で反射する
+// バンクショットを軌道シミュレーションで探索する。反射回数は弾の bounces 分まで。
 // 射線が通る方向（正規化ベクトル）を返す。撃てる解がなければ null。
 
 import { isWallCell } from "./physics";
+import { BULLET_RADIUS, TANK_RADIUS } from "./constants";
 import type { StageData } from "../stage/types";
 
 // 線分 (x1,y1)-(x2,y2) が壁セルに遮られていないか（端点付近は除外してサンプリング）。
@@ -46,7 +48,86 @@ function norm(x: number, y: number): { x: number; y: number } {
   return { x: x / m, y: y / m };
 }
 
+// 点(px,py)から線分(ax,ay)-(bx,by)への距離。
+function segDist(ax: number, ay: number, bx: number, by: number, px: number, py: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  const cx = ax + dx * t;
+  const cy = ay + dy * t;
+  return Math.hypot(px - cx, py - cy);
+}
+
+// 命中とみなす最接近距離（戦車半径＋弾半径の少し内側）。
+const HIT_TOL = TANK_RADIUS + BULLET_RADIUS * 0.5;
+
+// 仮想弾を(ex,ey)から単位方向(ux,uy)へ撃ち、maxBounce 回反射までに対象(px,py)へ
+// どれだけ近づけるか（最接近距離）を返す。実弾と同じく外壁・内壁すべてで反射する。
+function traceClosest(
+  stage: StageData,
+  ex: number,
+  ey: number,
+  ux: number,
+  uy: number,
+  px: number,
+  py: number,
+  maxBounce: number,
+  maxDist: number,
+): number {
+  const cell = stage.grid.cell;
+  const step = cell * 0.25; // 1ステップの進み（セルの1/4）
+  let x = ex;
+  let y = ey;
+  let vx = ux;
+  let vy = uy;
+  let bounces = maxBounce;
+  let traveled = 0;
+  let best = Infinity;
+  const skip = TANK_RADIUS * 1.5; // 発射直後の自分付近は無視（自爆距離を当てない）
+  const guard = Math.ceil(maxDist / step) + 8;
+  for (let s = 0; s < guard && traveled < maxDist; s++) {
+    let nx = x + vx * step;
+    let ny = y + vy * step;
+    // X 軸方向の壁
+    {
+      const col = Math.floor(nx / cell);
+      const row = Math.floor(y / cell);
+      if (isWallCell(stage, col, row)) {
+        if (bounces <= 0) return best;
+        bounces--;
+        vx = -vx;
+        nx = x;
+      }
+    }
+    // Y 軸方向の壁
+    {
+      const col = Math.floor(nx / cell);
+      const row = Math.floor(ny / cell);
+      if (isWallCell(stage, col, row)) {
+        if (bounces <= 0) return best;
+        bounces--;
+        vy = -vy;
+        ny = y;
+      }
+    }
+    if (traveled > skip) {
+      const d = segDist(x, y, nx, ny, px, py);
+      if (d < best) best = d;
+      if (best <= HIT_TOL) return best;
+    }
+    traveled += Math.hypot(nx - x, ny - y);
+    x = nx;
+    y = ny;
+  }
+  return best;
+}
+
 // 敵(ex,ey)から対象(px,py)を撃つ方向。直射→（allowBank時のみ）バンクショットの順に探す。
+// maxBank: バンクの最大反射回数（弾の bounces 分。黄緑なら2回反射まで）。
+// バンクは実弾の反射物理を軌道シミュレーションでなぞり、外壁・内壁すべての反射を使う。
 export function computeAimDir(
   stage: StageData,
   ex: number,
@@ -54,35 +135,40 @@ export function computeAimDir(
   px: number,
   py: number,
   allowBank = true,
+  maxBank = 1,
 ): { x: number; y: number } | null {
   if (lineClear(stage, ex, ey, px, py)) return norm(px - ex, py - ey);
-  if (!allowBank) return null; // 直射のみ（移動型）
+  if (!allowBank || maxBank < 1) return null; // 直射のみ
 
-  // バンクショット：場外境界の内側面（1セル枠を想定）で対象を鏡像化し、1回反射の射線を探す。
   const { cell, cols, rows } = stage.grid;
   const W = cols * cell;
   const H = rows * cell;
-  type Face = { vertical: boolean; f: number };
-  const faces: Face[] = [
-    { vertical: true, f: cell }, // 左
-    { vertical: true, f: W - cell }, // 右
-    { vertical: false, f: cell }, // 上
-    { vertical: false, f: H - cell }, // 下
-  ];
-  for (const fc of faces) {
-    const mx = fc.vertical ? 2 * fc.f - px : px;
-    const my = fc.vertical ? py : 2 * fc.f - py;
-    const ddx = mx - ex;
-    const ddy = my - ey;
-    const denom = fc.vertical ? ddx : ddy;
-    if (denom === 0) continue;
-    const t = (fc.f - (fc.vertical ? ex : ey)) / denom;
-    if (t <= 0.02 || t >= 0.98) continue;
-    const hx = ex + ddx * t;
-    const hy = ey + ddy * t;
-    if (lineClear(stage, ex, ey, hx, hy) && lineClear(stage, hx, hy, px, py)) {
-      return norm(ddx, ddy);
+  // 反射回数に応じて十分な飛距離を確保（打ち切り距離）
+  const maxDist = (W + H) * (maxBank + 1);
+
+  // 粗探索：全方位を等間隔にサンプリングし、最接近が最小の方向を探す
+  const COARSE = 180;
+  let bestAng = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < COARSE; i++) {
+    const ang = (i / COARSE) * Math.PI * 2;
+    const d = traceClosest(stage, ex, ey, Math.cos(ang), Math.sin(ang), px, py, maxBank, maxDist);
+    if (d < bestD) {
+      bestD = d;
+      bestAng = ang;
     }
   }
-  return null;
+  // 精探索：粗探索の最良方向の周辺を細かく詰める
+  const span = (Math.PI * 2) / COARSE;
+  const R = 12;
+  for (let j = -R; j <= R; j++) {
+    const ang = bestAng + (j / R) * span;
+    const d = traceClosest(stage, ex, ey, Math.cos(ang), Math.sin(ang), px, py, maxBank, maxDist);
+    if (d < bestD) {
+      bestD = d;
+      bestAng = ang;
+    }
+  }
+  if (bestD > HIT_TOL) return null; // 当てられる解なし
+  return { x: Math.cos(bestAng), y: Math.sin(bestAng) };
 }

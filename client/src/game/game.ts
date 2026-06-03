@@ -699,7 +699,7 @@ export class Game {
       const fireInterval = near ? t.fireInterval * NEAR_FIRE_MULT : t.fireInterval;
       e.cd -= dt;
       if (e.cd <= 0 && e.burstLeft <= 0) {
-        const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
+        const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank, t.bounces);
         if (dir) {
           if (t.salvo && t.bullets > 1) {
             // 砲台複数門：扇状に同時発射（同じグループ＝互いに相殺しない）
@@ -729,7 +729,7 @@ export class Game {
       if (e.burstLeft > 0) {
         e.burstTimer -= dt;
         if (e.burstTimer <= 0) {
-          let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
+          let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank, t.bounces);
           if (dir) {
             if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
             this.bulletGroup++;

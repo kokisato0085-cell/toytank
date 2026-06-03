@@ -18,6 +18,7 @@ interface Stick {
 // 発射要求。dir=null は「進行方向へ」（タップ／Space）。
 export interface FireReq {
   dir: { x: number; y: number } | null;
+  cursor?: boolean; // PC: マウスカーソルへ向けて発射
 }
 
 function emptyStick(): Stick {
@@ -30,6 +31,20 @@ export class Input {
   private aim = emptyStick();
   private fires: FireReq[] = [];
   private mineReqs = 0;
+  private mode: "mobile" | "pc" = "mobile";
+  private cursor: { x: number; y: number } | null = null; // PC: マウス位置（キャンバスpx）
+
+  setMode(mode: "mobile" | "pc"): void {
+    this.mode = mode;
+    this.move.active = false;
+    this.aim.active = false;
+  }
+  isPc(): boolean {
+    return this.mode === "pc";
+  }
+  getCursor(): { x: number; y: number } | null {
+    return this.cursor;
+  }
 
   constructor(private canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (e) => {
@@ -53,6 +68,12 @@ export class Input {
   }
 
   private onDown = (e: PointerEvent): void => {
+    if (this.mode === "pc") {
+      // PC：クリックでカーソル位置へ照準発射
+      this.cursor = this.toCanvas(e);
+      this.fires.push({ dir: null, cursor: true });
+      return;
+    }
     const p = this.toCanvas(e);
     const leftHalf = p.x < this.canvas.width / 2;
     const target = leftHalf ? this.move : this.aim;
@@ -65,6 +86,10 @@ export class Input {
   };
 
   private onMove = (e: PointerEvent): void => {
+    if (this.mode === "pc") {
+      this.cursor = this.toCanvas(e); // マウス追従
+      return;
+    }
     if (this.move.active && e.pointerId === this.move.id) this.move.cur = this.toCanvas(e);
     if (this.aim.active && e.pointerId === this.aim.id) this.aim.cur = this.toCanvas(e);
   };
@@ -139,8 +164,26 @@ export class Input {
 
   // スティック／パッドのUI（デバイス座標。呼び出し側は transform をリセット済みのこと）。
   drawSticks(ctx: CanvasRenderingContext2D): void {
+    if (this.mode === "pc") {
+      if (this.cursor) this.drawCrosshair(ctx, this.cursor.x, this.cursor.y);
+      return;
+    }
     if (this.move.active) this.drawPad(ctx, this.move, "#888", "#333");
     if (this.aim.active) this.drawPad(ctx, this.aim, "#caa", "#a33");
+  }
+
+  private drawCrosshair(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    ctx.save();
+    ctx.strokeStyle = "rgba(192,57,43,0.8)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    ctx.moveTo(x - 14, y);
+    ctx.lineTo(x + 14, y);
+    ctx.moveTo(x, y - 14);
+    ctx.lineTo(x, y + 14);
+    ctx.stroke();
+    ctx.restore();
   }
 
   private drawPad(ctx: CanvasRenderingContext2D, s: Stick, baseCol: string, knobCol: string): void {

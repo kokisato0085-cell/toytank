@@ -3,6 +3,7 @@
 import { TILE } from "../stage/types";
 import type { CellPos, StageData } from "../stage/types";
 import { BULLET_RADIUS, MINE_ARM, MINE_FUSE, MINE_RADIUS, MINE_WARN, TANK_RADIUS } from "./constants";
+import { sprite, spriteReady, tinted } from "./sprites";
 
 export const COLORS = {
   floor: "#e8e6df",
@@ -38,18 +39,31 @@ export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void
   const { cols, rows, cell } = stage.grid;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
+      const x = c * cell;
+      const y = r * cell;
       const v = stage.tiles[r][c];
-      if (v === TILE.HOLE) {
-        // 穴：床の上にグリッド内最大の円（角は床色のまま）。
+      // 床ベース（全セル）
+      if (spriteReady("floor")) ctx.drawImage(sprite("floor"), x, y, cell, cell);
+      else {
         ctx.fillStyle = COLORS.floor;
-        ctx.fillRect(c * cell, r * cell, cell, cell);
-        ctx.fillStyle = COLORS.hole;
-        ctx.beginPath();
-        ctx.arc((c + 0.5) * cell, (r + 0.5) * cell, cell / 2, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.fillStyle = v === TILE.STEEL ? COLORS.steel : v === TILE.BRICK ? COLORS.brick : COLORS.floor;
-        ctx.fillRect(c * cell, r * cell, cell, cell);
+        ctx.fillRect(x, y, cell, cell);
+      }
+      // 上に重ねる
+      if (v === TILE.STEEL || v === TILE.BRICK) {
+        const nm = v === TILE.STEEL ? "steel" : "brick";
+        if (spriteReady(nm)) ctx.drawImage(sprite(nm), x, y, cell, cell);
+        else {
+          ctx.fillStyle = v === TILE.STEEL ? COLORS.steel : COLORS.brick;
+          ctx.fillRect(x, y, cell, cell);
+        }
+      } else if (v === TILE.HOLE) {
+        if (spriteReady("hole")) ctx.drawImage(sprite("hole"), x, y, cell, cell);
+        else {
+          ctx.fillStyle = COLORS.hole;
+          ctx.beginPath();
+          ctx.arc(x + cell / 2, y + cell / 2, cell / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
   }
@@ -69,15 +83,43 @@ export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void
   }
 }
 
-// 戦車を1体描く（円の車体＋砲塔）。angle は砲塔の向き、radius は車体半径。
+// 角度θ（0=+X）の向きに画像を描く。画像は「真上(北)向き」前提。
+function drawSpriteAngled(
+  ctx: CanvasRenderingContext2D,
+  img: CanvasImageSource,
+  x: number,
+  y: number,
+  angle: number,
+  size: number,
+): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + Math.PI / 2); // 北向き画像を θ へ
+  ctx.drawImage(img, -size / 2, -size / 2, size, size);
+  ctx.restore();
+}
+
+// 戦車を1体描く。bodyAngle=車体(移動)の向き、turretAngle=砲塔の向き。
+// 画像(tank_body / tank_turret)があれば色で着色して描き、無ければ円＋砲身にフォールバック。
 export function drawTank(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
-  angle: number,
+  bodyAngle: number,
+  turretAngle: number,
   radius = TANK_RADIUS,
 ): void {
+  const body = spriteReady("tank_body") ? tinted("tank_body", color) : null;
+  const turret = spriteReady("tank_turret") ? tinted("tank_turret", color) : null;
+  if (body && turret) {
+    // 機体を当たり判定径より大きめに描く
+    const size = radius * 2 * 1.7;
+    drawSpriteAngled(ctx, body, x, y, bodyAngle, size);
+    drawSpriteAngled(ctx, turret, x, y, turretAngle, size);
+    return;
+  }
+  // フォールバック：円の車体＋砲身（砲塔の向き）
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -86,7 +128,7 @@ export function drawTank(
   ctx.lineWidth = Math.max(5, radius * 0.2);
   ctx.beginPath();
   ctx.moveTo(x, y);
-  ctx.lineTo(x + Math.cos(angle) * (radius + 8), y + Math.sin(angle) * (radius + 8));
+  ctx.lineTo(x + Math.cos(turretAngle) * (radius + 8), y + Math.sin(turretAngle) * (radius + 8));
   ctx.stroke();
 }
 

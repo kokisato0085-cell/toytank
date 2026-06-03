@@ -83,6 +83,20 @@ if (!canvas) throw new Error("canvas#game が見つかりません");
 
 const game = new Game(canvas, stage);
 
+// 操作モード（PC/スマホ）。既定はタッチ端末ならスマホ、それ以外はPC。設定は記憶。
+const touch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+const ctrlMode = (localStorage.getItem("toytank.ctrlmode") as "mobile" | "pc" | null) ?? (touch ? "mobile" : "pc");
+game.setInputMode(ctrlMode);
+const modeSel = document.getElementById("ctrl-mode") as HTMLSelectElement | null;
+if (modeSel) {
+  modeSel.value = ctrlMode;
+  modeSel.addEventListener("change", () => {
+    const m = modeSel.value as "mobile" | "pc";
+    localStorage.setItem("toytank.ctrlmode", m);
+    game.setInputMode(m);
+  });
+}
+
 if (campaignMode) {
   game.onStageClear = () => {
     idx++;

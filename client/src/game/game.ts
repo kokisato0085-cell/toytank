@@ -61,6 +61,7 @@ interface Enemy {
   age: number; // 出現からの経過秒（透明化タイミング用）
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
+  bodyAngle: number; // 車体（移動）の向き
   behavior: RuntimeBehavior; // 現在の行動軸（移動するタイプのみ使用）
   behaviorTimer: number; // 次に行動軸を切り替えるまでの秒
   wdCol: number; // 徘徊の目的セル（-1=未設定）
@@ -145,6 +146,7 @@ function makeEnemies(stage: StageData): Enemy[] {
       age: 0,
       cd: 0,
       facing: Math.PI / 2,
+      bodyAngle: Math.PI / 2,
       behavior: "combat",
       behaviorTimer: 0,
       wdCol: -1,
@@ -241,6 +243,25 @@ export class Game {
     this.interTimer = INTRO_PAUSE;
   }
 
+  // 操作モード切替（PC=マウスカーソル照準 / スマホ=スティック）。
+  setInputMode(mode: "mobile" | "pc"): void {
+    this.input.setMode(mode);
+  }
+
+  // 自機の照準方向：PC=マウスカーソルへ / スマホ=エイムパッド。無ければ null。
+  private playerAimDir(): { x: number; y: number } | null {
+    if (this.input.isPc()) {
+      const c = this.input.getCursor();
+      if (!c) return null;
+      const dx = c.x / this.scale - this.pos.x;
+      const dy = c.y / this.scale - this.pos.y;
+      const m = Math.hypot(dx, dy);
+      if (m < 1) return null;
+      return { x: dx / m, y: dy / m };
+    }
+    return this.input.aimDir();
+  }
+
   start(): void {
     this.last = performance.now();
     requestAnimationFrame(this.loop);
@@ -318,14 +339,15 @@ export class Game {
     } else {
       this.wasMoving = false;
     }
-    // 照準中は砲塔を照準方向へ
-    const ad = this.input.aimDir();
+    // 照準中は砲塔を照準方向へ（スマホ=エイムパッド / PC=マウスカーソル）
+    const ad = this.playerAimDir();
     if (ad) this.facing = Math.atan2(ad.y, ad.x);
 
     // 発射要求の処理
     for (const f of this.input.takeFires()) {
       if (this.bullets.filter((b) => b.owner === 0).length >= MAX_ACTIVE_BULLETS) break;
-      const dir = f.dir ?? { x: Math.cos(this.facing), y: Math.sin(this.facing) };
+      const fallback = { x: Math.cos(this.facing), y: Math.sin(this.facing) };
+      const dir = f.cursor ? (this.playerAimDir() ?? fallback) : (f.dir ?? fallback);
       this.fire(dir);
     }
 
@@ -663,7 +685,10 @@ export class Game {
           e.stuckRow = cr;
           e.stuckTimer = 0;
         }
-        if (moved) e.facing = moveAngle; // 普段は進行方向を向く
+        if (moved) {
+          e.bodyAngle = moveAngle; // 車体は進行方向
+          e.facing = moveAngle; // 砲塔も普段は進行方向（射線が通れば下で自機へ）
+        }
       }
       // 射線が通っている時だけ砲塔を自機へ向ける（射撃の構え）
       if (lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) {
@@ -854,12 +879,12 @@ export class Game {
     for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
       if (e.type.invisible && e.age >= CLOAK_TIME) continue; // 透明化中は描かない（轍・弾で推測）
-      drawTank(ctx, e.x, e.y, e.type.color, e.facing, this.er(e));
+      drawTank(ctx, e.x, e.y, e.type.color, e.bodyAngle, e.facing, this.er(e));
     }
     this.drawAimLine(ctx);
     // 大破演出中・ゲームオーバー後は自機を描かない（破壊された）
     if (this.state !== "dying" && this.state !== "gameover") {
-      drawTank(ctx, this.pos.x, this.pos.y, COLORS.p1, this.facing);
+      drawTank(ctx, this.pos.x, this.pos.y, COLORS.p1, this.heading, this.facing);
     }
     for (const b of this.bullets) {
       drawBullet(ctx, b.x, b.y, Math.atan2(b.vy, b.vx), b.owner === 0 ? COLORS.bulletP : COLORS.bulletE);
@@ -1031,7 +1056,7 @@ export class Game {
 
   // 直進の照準線（反射は描かない）。最初の壁／場外／敵に当たる位置まで。
   private drawAimLine(ctx: CanvasRenderingContext2D): void {
-    const d = this.input.aimDir();
+    const d = this.playerAimDir();
     if (!d) return;
     const STEP_LEN = 6;
     const MAX_LEN = 900;

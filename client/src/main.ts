@@ -5,7 +5,7 @@
 import { sampleStage } from "./game/sampleStage";
 import { Game } from "./game/game";
 import { validateStage } from "./stage/validate";
-import { listSavedStages, loadCampaign, loadSavedStage } from "./game/stageStore";
+import { listSavedStages, loadCampaign, loadSavedStage, stageLoadErrors } from "./game/stageStore";
 import type { StageData } from "./stage/types";
 
 const SAMPLE_KEY = "__sample__";
@@ -22,19 +22,38 @@ const campaign: StageData[] = loadCampaign()
 let stage: StageData;
 let campaignMode = false;
 let idx = 0;
+let loadMsg = "";
+let loadFailed = false;
 if (want === SAMPLE_KEY) {
   stage = sampleStage();
+  loadMsg = "サンプルをプレイ中";
 } else if (want) {
-  stage = loadSavedStage(want) ?? sampleStage();
+  const loaded = loadSavedStage(want);
+  if (loaded) {
+    stage = loaded;
+    loadMsg = `「${want}」をプレイ中`;
+  } else {
+    stage = sampleStage();
+    loadFailed = true;
+    loadMsg = `⚠「${want}」を読み込めません → サンプル表示中。理由：${stageLoadErrors(want).join(" / ")}`;
+  }
 } else if (campaign.length > 0) {
   campaignMode = true;
   stage = campaign[0];
+  loadMsg = "キャンペーンをプレイ中";
 } else {
   stage = sampleStage();
+  loadMsg = "サンプルをプレイ中（保存ステージがありません）";
 }
 
 const errs = validateStage(stage);
 if (errs.length) console.warn("ステージ検証エラー:", errs);
+
+const statusEl = document.getElementById("load-status");
+if (statusEl) {
+  statusEl.textContent = loadMsg;
+  statusEl.style.color = loadFailed ? "#c0392b" : "#555";
+}
 
 // ステージ選択セレクタ
 const sel = document.getElementById("stage-select") as HTMLSelectElement | null;

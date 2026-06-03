@@ -9,6 +9,7 @@ import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, rend
 import { circleHitsSolid, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, lineClear } from "./ai";
+import { nextStepToward } from "./pathfind";
 import { Input } from "./input";
 import {
   BEHAVIOR_MAX,
@@ -17,6 +18,7 @@ import {
   BULLET_SPEED,
   DEATH_FX,
   ENEMY_CLOSE,
+  ENEMY_MINE_INTERVAL,
   ENEMY_NEAR,
   EXPLOSION_LIFE,
   NEAR_FIRE_MULT,
@@ -35,6 +37,8 @@ import {
   STEP,
   TANK_RADIUS,
   TANK_SPEED,
+  TANK_TURN_ALIGN,
+  TANK_TURN_RATE,
   TRACK_GAP,
 } from "./constants";
 
@@ -59,9 +63,20 @@ interface Enemy {
   stuckCol: number; // 滞留判定：直近のマス
   stuckRow: number;
   stuckTimer: number; // 同じマスに留まっている秒
+  mineCd: number; // 地雷設置のクールダウン残り(秒)
+  wpCol: number; // 追跡経路の次の一歩（-1=なし）
+  wpRow: number;
+  pathTimer: number; // 経路を再計算するまでの秒
 }
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
+
+// 角度を [-PI, PI] に正規化する。
+function angleNorm(x: number): number {
+  while (x > Math.PI) x -= 2 * Math.PI;
+  while (x < -Math.PI) x += 2 * Math.PI;
+  return x;
+}
 
 // ベクトルを角度 ang(rad) 回転する。
 function rotate(v: { x: number; y: number }, ang: number): { x: number; y: number } {
@@ -126,6 +141,10 @@ function makeEnemies(stage: StageData): Enemy[] {
       stuckCol: Math.floor(c.x / stage.grid.cell),
       stuckRow: Math.floor(c.y / stage.grid.cell),
       stuckTimer: 0,
+      mineCd: 1.5,
+      wpCol: -1,
+      wpRow: -1,
+      pathTimer: 0,
     };
   });
 }
@@ -138,10 +157,12 @@ export class Game {
   private pos: { x: number; y: number };
   private enemies: Enemy[];
   private bullets: Bullet[] = [];
-  private mines: { x: number; y: number; t: number }[] = [];
+  private mines: { x: number; y: number; t: number; owner: Enemy | null }[] = [];
   private explosions: { x: number; y: number; t: number; maxR: number; life: number }[] = [];
   private blastR: number;
-  private facing = -Math.PI / 2; // 初期は上向き
+  private facing = -Math.PI / 2; // 砲塔の向き（描画）
+  private heading = -Math.PI / 2; // 車体（キャタピラ）の向き＝移動方向
+  private wasMoving = false; // 前フレーム動いていたか（移動中の方向転換判定）
   private acc = 0;
   private last = 0;
   private lives = SOLO_LIVES;
@@ -246,16 +267,39 @@ export class Game {
   private update(dt: number): void {
     if (this.state !== "playing") return; // クリア／ゲームオーバー中は停止
 
-    // 移動（壁＋敵=障害物の軸別スライド）
+    // 移動（戦車らしい旋回モデル）：車体の向き(heading)を入力方向へ旋回させてから前進。
+    // 同方向の継続/再開は遅延なし。停止から別方向は向きを変える時間(=旋回)が要る。
+    // 移動中の方向転換は止まらず曲がる（角ばって曲がる）。
     const a = this.input.axis();
-    if (a.x !== 0 || a.y !== 0) {
-      const nx = this.pos.x + a.x * TANK_SPEED * dt;
-      const ny = this.pos.y + a.y * TANK_SPEED * dt;
-      const blocked = (px: number, py: number): boolean =>
-        circleHitsSolid(this.stage, px, py, TANK_RADIUS) || this.hitsEnemy(px, py);
-      this.pos = slide(this.pos.x, this.pos.y, nx, ny, blocked);
-      this.facing = Math.atan2(a.y, a.x);
-      this.stampTrack(this.pos.x, this.pos.y, this.facing, this.playerTrackFrom);
+    const mag = Math.hypot(a.x, a.y);
+    if (mag > 0.05) {
+      const inAng = Math.atan2(a.y, a.x);
+      // 車体の「軸」に対する前後の角度差。前後どちらかに合っていれば旋回不要（＝逆方向は即バック）。
+      const diffF = angleNorm(inAng - this.heading);
+      const diffB = angleNorm(inAng - this.heading - Math.PI);
+      const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
+      const turnErr = forwardCloser ? diffF : diffB; // 近い側の軸を入力へ寄せる
+      const maxTurn = TANK_TURN_RATE * dt;
+      this.heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
+      const aligned =
+        Math.min(Math.abs(angleNorm(inAng - this.heading)), Math.abs(angleNorm(inAng - this.heading - Math.PI))) <
+        TANK_TURN_ALIGN;
+      if (this.wasMoving || aligned) {
+        const moveDir = forwardCloser ? this.heading : this.heading + Math.PI; // 前進 or バック
+        const step = TANK_SPEED * mag * dt;
+        const nx = this.pos.x + Math.cos(moveDir) * step;
+        const ny = this.pos.y + Math.sin(moveDir) * step;
+        const blocked = (px: number, py: number): boolean =>
+          circleHitsSolid(this.stage, px, py, TANK_RADIUS) || this.hitsEnemy(px, py);
+        this.pos = slide(this.pos.x, this.pos.y, nx, ny, blocked);
+        this.stampTrack(this.pos.x, this.pos.y, this.heading, this.playerTrackFrom);
+        this.wasMoving = true;
+      } else {
+        this.wasMoving = false; // 横方向への新規発進はその場で旋回中
+      }
+      this.facing = this.heading;
+    } else {
+      this.wasMoving = false;
     }
     // 照準中は砲塔を照準方向へ
     const ad = this.input.aimDir();
@@ -334,8 +378,8 @@ export class Game {
 
   // 地雷を設置（最大 MAX_MINES）。外部ボタンからも呼べる。
   layMine(): void {
-    if (this.mines.length >= MAX_MINES) return;
-    this.mines.push({ x: this.pos.x, y: this.pos.y, t: 0 });
+    if (this.mines.filter((m) => m.owner === null).length >= MAX_MINES) return;
+    this.mines.push({ x: this.pos.x, y: this.pos.y, t: 0, owner: null });
   }
 
   private updateMines(dt: number): void {
@@ -455,7 +499,8 @@ export class Game {
   // 行動軸をタイプの性格に応じた重みで切り替える。
   private pickBehavior(e: Enemy): void {
     const r = Math.random();
-    if (e.type.behavior === "approach") e.behavior = r < 0.8 ? "combat" : "wander";
+    if (e.type.behavior === "chaser") e.behavior = r < 0.6 ? "combat" : "wander"; // 追跡（ほどほど）
+    else if (e.type.behavior === "approach") e.behavior = r < 0.8 ? "combat" : "wander";
     else if (e.type.behavior === "kite") e.behavior = r < 0.5 ? "retreat" : r < 0.9 ? "wander" : "combat";
     else e.behavior = r < 0.6 ? "combat" : r < 0.9 ? "wander" : "retreat"; // balanced
     e.behaviorTimer = BEHAVIOR_MIN + Math.random() * (BEHAVIOR_MAX - BEHAVIOR_MIN);
@@ -479,16 +524,44 @@ export class Game {
         const dy = this.pos.y - e.y;
         const d = Math.hypot(dx, dy);
         let behavior = e.behavior;
-        if (behavior === "combat") {
+        const defensiveType = e.type.behavior === "balanced" || e.type.behavior === "kite";
+        if (behavior === "combat" && defensiveType) {
           // 壁越しには突っ込まない：射線が壁で切れていて、かなり近くなければ守備的（退避）に
+          // ※攻撃的タイプ(approach/chaser)は退かず、回り込みで追い続ける
           if (d > ENEMY_CLOSE && !lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) behavior = "retreat";
         } else if (behavior === "retreat" && d > ENEMY_NEAR * 1.5) {
           behavior = "wander"; // 遠すぎる退避は徘徊に（端へ逃げ続けない）
         }
+        const cell = this.stage.grid.cell;
         let desired: number;
-        if (behavior === "combat") desired = Math.atan2(dy, dx);
-        else if (behavior === "retreat") desired = Math.atan2(-dy, -dx);
-        else desired = Math.atan2(e.wanderY, e.wanderX);
+        const pursue = e.type.behavior === "chaser" || e.type.behavior === "approach";
+        if (behavior === "combat" && pursue) {
+          // 追跡タイプ：BFSで「行けるルートの次の一歩」を求めて回り込む（0.4秒ごと再計算）
+          e.pathTimer -= dt;
+          if (e.pathTimer <= 0 || e.wpCol < 0) {
+            const n = nextStepToward(
+              this.stage,
+              Math.floor(e.x / cell),
+              Math.floor(e.y / cell),
+              Math.floor(this.pos.x / cell),
+              Math.floor(this.pos.y / cell),
+            );
+            e.wpCol = n ? n.col : -1;
+            e.wpRow = n ? n.row : -1;
+            e.pathTimer = 0.4;
+          }
+          if (e.wpCol >= 0) {
+            desired = Math.atan2((e.wpRow + 0.5) * cell - e.y, (e.wpCol + 0.5) * cell - e.x);
+          } else {
+            desired = Math.atan2(dy, dx); // 隣接/同セル/到達不可は直接
+          }
+        } else if (behavior === "combat") {
+          desired = Math.atan2(dy, dx);
+        } else if (behavior === "retreat") {
+          desired = Math.atan2(-dy, -dx);
+        } else {
+          desired = Math.atan2(e.wanderY, e.wanderX);
+        }
 
         // 壁を擦らず回り込む：希望方向から少しずつ角度をずらし、通れる向きへ進む
         const step = t.speed * dt;
@@ -517,7 +590,6 @@ export class Game {
           e.ty = e.y;
         }
         // 同じマスに2秒以上留まったら強制的に無目的へ（隅でのハマり防止）
-        const cell = this.stage.grid.cell;
         const cc = Math.floor(e.x / cell);
         const cr = Math.floor(e.y / cell);
         if (cc === e.stuckCol && cr === e.stuckRow) {
@@ -535,9 +607,12 @@ export class Game {
           e.stuckRow = cr;
           e.stuckTimer = 0;
         }
+        if (moved) e.facing = moveAngle; // 普段は進行方向を向く
       }
-      // 砲塔は常に自機の方を向く（壁回避でビクビクしないよう移動方向とは分離）
-      e.facing = Math.atan2(this.pos.y - e.y, this.pos.x - e.x);
+      // 射線が通っている時だけ砲塔を自機へ向ける（射撃の構え）
+      if (lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) {
+        e.facing = Math.atan2(this.pos.y - e.y, this.pos.x - e.x);
+      }
 
       // 射撃：自機が近いほど発射間隔を短く。タイプ設定（バンク/精度/弾速/反射/連射）に従う
       e.cd -= dt;
@@ -555,6 +630,19 @@ export class Game {
           e.cd = near ? t.fireInterval * NEAR_FIRE_MULT : t.fireInterval;
         } else {
           e.cd = 0.3; // 射線が無いときは少し待って再試行
+        }
+      }
+
+      // 地雷を置くタイプ：上限まで一定間隔で設置
+      if (t.maxMines > 0) {
+        e.mineCd -= dt;
+        if (e.mineCd <= 0) {
+          if (this.mines.filter((m) => m.owner === e).length < t.maxMines) {
+            this.mines.push({ x: e.x, y: e.y, t: 0, owner: e });
+            e.mineCd = ENEMY_MINE_INTERVAL;
+          } else {
+            e.mineCd = 1.0; // 満杯なら少し待つ
+          }
         }
       }
     }
@@ -591,10 +679,12 @@ export class Game {
     this.pos = { ...this.spawn };
     this.playerTrackFrom = { ...this.spawn };
     this.facing = -Math.PI / 2;
+    this.heading = -Math.PI / 2;
+    this.wasMoving = false;
     this.bullets = [];
     this.mines = [];
     this.explosions = [];
-    // 跡・バッテン印は維持（完全リセットまで残す）
+    this.tracks = []; // 轍は被弾でリセット（継続しない）。バッテン印は維持
     for (const e of this.enemies) {
       e.x = e.hx;
       e.y = e.hy;
@@ -617,6 +707,8 @@ export class Game {
     this.pos = { ...this.spawn };
     this.playerTrackFrom = { ...this.spawn };
     this.facing = -Math.PI / 2;
+    this.heading = -Math.PI / 2;
+    this.wasMoving = false;
   }
 
   // 最初からやり直す（残機リセット）。クリア／ゲームオーバー後に呼ぶ。
@@ -632,7 +724,14 @@ export class Game {
     const r2 = TANK_RADIUS * 2;
     if (circleHitsSolid(this.stage, px, py, TANK_RADIUS)) return true;
     if (this.dist(px, py, this.pos.x, this.pos.y) < r2) return true;
-    return this.enemies.some((o) => o !== self && this.dist(px, py, o.x, o.y) < r2);
+    if (this.enemies.some((o) => o !== self && this.dist(px, py, o.x, o.y) < r2)) return true;
+    // 自分が置いた地雷の爆風圏には踏み込まない（外へ離れる方向は許可）
+    for (const m of this.mines) {
+      if (m.owner !== self) continue;
+      const dCand = this.dist(px, py, m.x, m.y);
+      if (dCand < this.blastR && dCand < this.dist(self.x, self.y, m.x, m.y)) return true;
+    }
+    return false;
   }
 
   private hitsEnemy(px: number, py: number): boolean {

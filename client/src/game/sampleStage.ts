@@ -30,6 +30,8 @@ export function sampleStage(): StageData {
     { col: 10, row: 11, pattern: "gray" },
     { col: 5, row: 3, pattern: "darkgreen" },
     { col: 17, row: 11, pattern: "yellowgreen" },
+    { col: 6, row: 2, pattern: "yellow" },
+    { col: 13, row: 11, pattern: "pink" },
   ];
   return s;
 }

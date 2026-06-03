@@ -2,7 +2,7 @@
 // ステージデータの enemy.pattern はこのキーを参照する。
 // 段階1ではタイプ1/2/4/6を実装。地雷・透明・HPなどの新メカニクスは順次対応（未対応分は無効）。
 
-export type EnemyBehavior = "guard" | "approach" | "kite" | "balanced";
+export type EnemyBehavior = "guard" | "approach" | "kite" | "balanced" | "chaser";
 
 export interface EnemyType {
   key: string;
@@ -22,7 +22,7 @@ export interface EnemyType {
 }
 
 const NORMAL_BULLET = 380;
-const FAST_BULLET = 780; // ミサイル型の超高速弾
+const FAST_BULLET = 680; // ミサイル型の高速弾
 
 export const ENEMY_TYPES: Record<string, EnemyType> = {
   // --- 旧2タイプ（互換のため維持） ---
@@ -38,6 +38,10 @@ export const ENEMY_TYPES: Record<string, EnemyType> = {
   darkgreen: { key: "darkgreen", name: "深緑", color: "#1f7a47", speed: 95, behavior: "approach", fireInterval: 1.8, bullets: 1, bounces: 0, bulletSpeed: FAST_BULLET, bank: false, aimJitter: 0.02, maxMines: 0, hp: 1, invisible: false },
   // 6. 黄緑：静止・バンクあり・超高速で2回反射するミサイル
   yellowgreen: { key: "yellowgreen", name: "黄緑", color: "#9bc53d", speed: 0, behavior: "guard", fireInterval: 2.8, bullets: 1, bounces: 2, bulletSpeed: FAST_BULLET, bank: true, aimJitter: 0.05, maxMines: 0, hp: 1, invisible: false },
+  // 3. 黄：攻撃的にプレイヤーを追い回す・地雷を最大4設置（バンクなし）
+  yellow: { key: "yellow", name: "黄(地雷)", color: "#e0c020", speed: 100, behavior: "chaser", fireInterval: 1.8, bullets: 1, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: false, aimJitter: 0.1, maxMines: 4, hp: 1, invisible: false },
+  // 5. ピンク：高速・攻撃的・3連射（バンクなし）
+  pink: { key: "pink", name: "ピンク", color: "#e84fa0", speed: 140, behavior: "approach", fireInterval: 1.0, bullets: 3, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: false, aimJitter: 0.08, maxMines: 0, hp: 1, invisible: false },
 };
 
 export const ENEMY_TYPE_KEYS = Object.keys(ENEMY_TYPES);

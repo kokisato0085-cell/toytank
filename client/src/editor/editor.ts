@@ -386,8 +386,16 @@ $("btn-save-local").addEventListener("click", () => {
   refreshSavedList();
   renderCampaign();
   selSaved.value = name;
-  messages.className = "ok";
-  messages.textContent = `✓ 「${name}」をブラウザに保存しました`;
+  // 未完成（検証エラー）のまま保存した場合は警告（ゲームでは弾かれてサンプル表示になる）
+  const errs = validateStage(buildStage());
+  if (!state.p1) errs.unshift("P1 を配置してください");
+  if (errs.length) {
+    messages.className = "ng";
+    messages.textContent = `⚠ 「${name}」を保存しましたが未完成です（このままではゲームで遊べません）：\n⚠ ${errs.join("\n⚠ ")}`;
+  } else {
+    messages.className = "ok";
+    messages.textContent = `✓ 「${name}」を保存しました（ゲームで遊べます）`;
+  }
 });
 
 $("btn-load-local").addEventListener("click", () => {

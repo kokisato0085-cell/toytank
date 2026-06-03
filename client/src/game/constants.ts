@@ -1,6 +1,8 @@
 // ゲームの調整値（BasicDesign §13）。
 export const TANK_RADIUS = 24; // 戦車の当たり半径(px)
 export const TANK_SPEED = 140; // 戦車の最大速度(px/s)
+export const TANK_TURN_RATE = 3.2; // 自機の旋回速度(rad/s)。約90°を0.5秒で向く
+export const TANK_TURN_ALIGN = 0.35; // 停止から動き出すのに必要な向きの一致(rad)
 export const STEP = 1 / 60; // 固定タイムステップ(秒)
 
 export const BULLET_SPEED = 380; // 弾速(px/s)
@@ -27,6 +29,7 @@ export const ENEMY_CLOSE = 150; // これより近いと壁越しでも接近を
 export const NEAR_FIRE_MULT = 0.55; // 近接時の発射間隔倍率（短く＝速く撃つ）
 export const BEHAVIOR_MIN = 1.2; // 行動軸（戦闘/退避/無目的）の切替間隔の最小(秒)
 export const BEHAVIOR_MAX = 2.8; // 同・最大(秒)
+export const ENEMY_MINE_INTERVAL = 2.5; // 地雷を設置する敵の設置間隔(秒)
 
 export const SOLO_LIVES = 3; // ソロの残機
 

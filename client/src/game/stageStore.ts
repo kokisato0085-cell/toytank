@@ -18,6 +18,18 @@ export function listSavedStages(): string[] {
   return names;
 }
 
+// 指定ステージを読み込めない理由（検証エラー等）を返す。読み込めるなら空配列。
+export function stageLoadErrors(name: string): string[] {
+  const raw = localStorage.getItem(LS_PREFIX + name);
+  if (raw === null) return ["保存が見つかりません"];
+  try {
+    const data = JSON.parse(raw) as StageData;
+    return validateStage(data);
+  } catch {
+    return ["JSONとして読めません（データが壊れています）"];
+  }
+}
+
 // キャンペーン（再生順のステージ名リスト）を読み込む。
 export function loadCampaign(): string[] {
   try {

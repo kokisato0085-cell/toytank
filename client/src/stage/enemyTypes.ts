@@ -11,10 +11,12 @@ export interface EnemyType {
   speed: number; // 移動速度(px/s)。0=静止
   behavior: EnemyBehavior; // 行動性格
   fireInterval: number; // 発射間隔(秒)
-  bullets: number; // 1回の発射数（>1で扇状の同時発射）
+  bullets: number; // 発射数（連射なら逐次の発数、salvoなら同時発射数）
+  salvo?: boolean; // true=同じ瞬間に扇状で同時発射（砲台複数門）。省略/false=同じ発射口から逐次連射
   bounces: number; // 弾の反射回数
   bulletSpeed: number; // 弾速(px/s)
   bank: boolean; // バンクショット可否
+  scale?: number; // 機体サイズ倍率（省略=1）。当たり判定・描画に反映
   aimJitter: number; // 照準ばらつき(rad)。小さいほど正確
   maxMines: number; // 設置できる地雷数（0=なし。※実装は後段）
   hp: number; // 撃破に必要な命中数
@@ -42,6 +44,12 @@ export const ENEMY_TYPES: Record<string, EnemyType> = {
   yellow: { key: "yellow", name: "黄(地雷)", color: "#e0c020", speed: 100, behavior: "chaser", fireInterval: 1.8, bullets: 1, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: false, aimJitter: 0.1, maxMines: 4, hp: 1, invisible: false },
   // 5. ピンク：高速・攻撃的・3連射（バンクなし）
   pink: { key: "pink", name: "ピンク", color: "#e84fa0", speed: 140, behavior: "approach", fireInterval: 1.0, bullets: 3, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: false, aimJitter: 0.08, maxMines: 0, hp: 1, invisible: false },
+  // 7. 紫：高速攻撃的・超高速5連射・反射1・バンクあり・地雷2
+  purple: { key: "purple", name: "紫", color: "#8e44ad", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 2, hp: 1, invisible: false },
+  // 9. 黒：超高速・追跡・最速2連射・反射0ミサイル・地雷2（最強）
+  black: { key: "black", name: "黒", color: "#222831", speed: 180, behavior: "chaser", fireInterval: 0.6, bullets: 2, bounces: 0, bulletSpeed: FAST_BULLET, bank: false, aimJitter: 0.05, maxMines: 2, hp: 1, invisible: false },
+  // 10. 赤黒紫：普通速・バンクあり・砲台5門同時・普通弾・HP3
+  boss: { key: "boss", name: "ボス", color: "#5b2c4d", speed: 90, behavior: "balanced", fireInterval: 1.6, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, scale: 2, aimJitter: 0.06, maxMines: 0, hp: 5, invisible: false, salvo: true },
 };
 
 export const ENEMY_TYPE_KEYS = Object.keys(ENEMY_TYPES);

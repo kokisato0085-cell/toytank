@@ -69,17 +69,24 @@ export function renderMap(ctx: CanvasRenderingContext2D, stage: StageData): void
   }
 }
 
-// 戦車を1体描く（円の車体＋砲塔）。angle は砲塔の向き（ラジアン）。
-export function drawTank(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, angle: number): void {
+// 戦車を1体描く（円の車体＋砲塔）。angle は砲塔の向き、radius は車体半径。
+export function drawTank(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+  angle: number,
+  radius = TANK_RADIUS,
+): void {
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(x, y, TANK_RADIUS, 0, Math.PI * 2);
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = COLORS.barrel;
-  ctx.lineWidth = 5;
+  ctx.lineWidth = Math.max(5, radius * 0.2);
   ctx.beginPath();
   ctx.moveTo(x, y);
-  ctx.lineTo(x + Math.cos(angle) * (TANK_RADIUS + 8), y + Math.sin(angle) * (TANK_RADIUS + 8));
+  ctx.lineTo(x + Math.cos(angle) * (radius + 8), y + Math.sin(angle) * (radius + 8));
   ctx.stroke();
 }
 

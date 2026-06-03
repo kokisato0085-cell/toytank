@@ -6,7 +6,7 @@ import { TILE } from "../stage/types";
 import type { StageData, TileValue } from "../stage/types";
 import { ENEMY_TYPES, getEnemyType, type EnemyType } from "../stage/enemyTypes";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
-import { circleHitsSolid, slide } from "./physics";
+import { circleHitsSolid, isSolidCell, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
@@ -30,6 +30,7 @@ import {
   MINE_FUSE,
   MINE_RADIUS,
   INTRO_PAUSE,
+  BURST_GAP,
   MAX_TRACKS,
   RESPAWN_PAUSE,
   SELF_GRACE,
@@ -54,16 +55,19 @@ interface Enemy {
   tx: number; // 直近のキャタピラ跡を刻んだ位置
   ty: number;
   type: EnemyType; // タイプ設定（色・速度・射撃など）
+  hp: number; // 残りHP（被弾で減り0で破壊）
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
   behavior: RuntimeBehavior; // 現在の行動軸（移動するタイプのみ使用）
   behaviorTimer: number; // 次に行動軸を切り替えるまでの秒
-  wanderX: number; // 無目的移動の向き
-  wanderY: number;
+  wdCol: number; // 徘徊の目的セル（-1=未設定）
+  wdRow: number;
   stuckCol: number; // 滞留判定：直近のマス
   stuckRow: number;
   stuckTimer: number; // 同じマスに留まっている秒
   mineCd: number; // 地雷設置のクールダウン残り(秒)
+  burstLeft: number; // 連射の残り発数
+  burstTimer: number; // 次の連射弾までの秒
   wpCol: number; // 追跡経路の次の一歩（-1=なし）
   wpRow: number;
   pathTimer: number; // 経路を再計算するまでの秒
@@ -124,6 +128,7 @@ function drawCross(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
 function makeEnemies(stage: StageData): Enemy[] {
   return stage.enemies.map((e) => {
     const c = cellCenter(stage, e);
+    const ty = getEnemyType(e.pattern);
     return {
       x: c.x,
       y: c.y,
@@ -131,17 +136,20 @@ function makeEnemies(stage: StageData): Enemy[] {
       hy: c.y,
       tx: c.x,
       ty: c.y,
-      type: getEnemyType(e.pattern),
+      type: ty,
+      hp: ty.hp,
       cd: 0,
       facing: Math.PI / 2,
       behavior: "combat",
       behaviorTimer: 0,
-      wanderX: 0,
-      wanderY: 0,
+      wdCol: -1,
+      wdRow: -1,
       stuckCol: Math.floor(c.x / stage.grid.cell),
       stuckRow: Math.floor(c.y / stage.grid.cell),
       stuckTimer: 0,
       mineCd: 1.5,
+      burstLeft: 0,
+      burstTimer: 0,
       wpCol: -1,
       wpRow: -1,
       pathTimer: 0,
@@ -320,11 +328,17 @@ export class Game {
     const mineHits: number[] = []; // 弾が当たった地雷（即起爆）
     for (const b of this.bullets) {
       if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
-      const ei = this.enemies.findIndex((e) => this.near(b.x, b.y, e.x, e.y));
+      const ei = this.enemies.findIndex((e) => this.dist(b.x, b.y, e.x, e.y) < this.er(e) + BULLET_RADIUS);
       if (ei >= 0) {
-        this.markKill(this.enemies[ei]); // 撃破数＋バッテン印
-        this.enemies.splice(ei, 1); // 敵を破壊（FF：弾は所有者を問わず当たる）
-        continue;
+        const en = this.enemies[ei];
+        en.hp--;
+        if (en.hp <= 0) {
+          this.markKill(en); // 撃破数＋大破演出＋バッテン印
+          this.enemies.splice(ei, 1);
+        } else {
+          this.hitFx(b.x, b.y); // HPが残る敵は小ヒット表示
+        }
+        continue; // 弾は消費（FF：所有者を問わず当たる）
       }
       // 自機への命中（自爆猶予経過後、または他者の弾）
       if ((b.owner !== 0 || b.age >= SELF_GRACE) && this.near(b.x, b.y, this.pos.x, this.pos.y)) {
@@ -346,6 +360,7 @@ export class Game {
       if (removed.has(i)) continue;
       for (let j = i + 1; j < alive.length; j++) {
         if (removed.has(j)) continue;
+        if (alive[i].owner === alive[j].owner) continue; // 同じ陣営の弾（連射含む）は相殺しない
         if (bulletsCollide(alive[i], alive[j])) {
           removed.add(i);
           removed.add(j);
@@ -402,11 +417,16 @@ export class Game {
       // 1) 壊すブロックを「破壊前のタイル」で確定（手前の壁が奥を守る＝貫通させない）
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
-      if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
+      //    ※設置者は自分の地雷では無傷（owner===null=自機 / それ以外=その敵）
+      if (m.owner !== null && this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
       this.enemies = this.enemies.filter((e) => {
-        if (this.inBlast(m.x, m.y, e.x, e.y)) {
-          this.markKill(e); // 撃破数＋バッテン印
-          return false;
+        if (e !== m.owner && this.inBlast(m.x, m.y, e.x, e.y)) {
+          e.hp--;
+          if (e.hp <= 0) {
+            this.markKill(e); // 撃破数＋大破演出＋バッテン印
+            return false;
+          }
+          this.hitFx(e.x, e.y);
         }
         return true;
       });
@@ -449,6 +469,11 @@ export class Game {
     return Math.hypot(ax - bx, ay - by);
   }
 
+  // 敵の当たり半径（タイプのサイズ倍率を反映）。
+  private er(e: Enemy): number {
+    return TANK_RADIUS * (e.type.scale ?? 1);
+  }
+
   private addTrack(x: number, y: number, a: number): void {
     this.tracks.push({ x, y, a });
     if (this.tracks.length > MAX_TRACKS) this.tracks.shift();
@@ -483,8 +508,9 @@ export class Game {
     owner: number,
     speed = BULLET_SPEED,
     bounces = MAX_BOUNCES,
+    originR = TANK_RADIUS,
   ): void {
-    const off = TANK_RADIUS + BULLET_RADIUS + 2;
+    const off = originR + BULLET_RADIUS + 2; // 機体の外側から発射（大型機の自滅防止）
     this.bullets.push({
       x: ox + dir.x * off,
       y: oy + dir.y * off,
@@ -504,11 +530,22 @@ export class Game {
     else if (e.type.behavior === "kite") e.behavior = r < 0.5 ? "retreat" : r < 0.9 ? "wander" : "combat";
     else e.behavior = r < 0.6 ? "combat" : r < 0.9 ? "wander" : "retreat"; // balanced
     e.behaviorTimer = BEHAVIOR_MIN + Math.random() * (BEHAVIOR_MAX - BEHAVIOR_MIN);
-    if (e.behavior === "wander") {
-      const a = Math.random() * Math.PI * 2;
-      e.wanderX = Math.cos(a);
-      e.wanderY = Math.sin(a);
+    if (e.behavior === "wander") this.pickWanderDest(e);
+  }
+
+  // 徘徊の目的地（ランダムな床セル）を選ぶ。
+  private pickWanderDest(e: Enemy): void {
+    const { cols, rows } = this.stage.grid;
+    for (let i = 0; i < 20; i++) {
+      const c = Math.floor(Math.random() * cols);
+      const r = Math.floor(Math.random() * rows);
+      if (!isSolidCell(this.stage, c, r)) {
+        e.wdCol = c;
+        e.wdRow = r;
+        return;
+      }
     }
+    e.wdCol = -1;
   }
 
   private updateEnemies(dt: number): void {
@@ -533,34 +570,38 @@ export class Game {
           behavior = "wander"; // 遠すぎる退避は徘徊に（端へ逃げ続けない）
         }
         const cell = this.stage.grid.cell;
+        const ecol = Math.floor(e.x / cell);
+        const erow = Math.floor(e.y / cell);
+        // 行動に応じた目的セル（戦闘=自機 / 退避=離れた床 / 徘徊=ランダム床）
+        let tcol: number;
+        let trow: number;
+        if (behavior === "retreat") {
+          const m = d || 1;
+          tcol = Math.max(0, Math.min(this.stage.grid.cols - 1, Math.floor((e.x - (dx / m) * cell * 4) / cell)));
+          trow = Math.max(0, Math.min(this.stage.grid.rows - 1, Math.floor((e.y - (dy / m) * cell * 4) / cell)));
+        } else if (behavior === "wander") {
+          if (e.wdCol < 0 || (ecol === e.wdCol && erow === e.wdRow)) this.pickWanderDest(e);
+          tcol = e.wdCol;
+          trow = e.wdRow;
+        } else {
+          tcol = Math.floor(this.pos.x / cell);
+          trow = Math.floor(this.pos.y / cell);
+        }
+        // BFSで目的セルへの「次の一歩」を求めて回り込む（0.3秒ごと再計算）＝壁を正確に避ける
+        e.pathTimer -= dt;
+        if (e.pathTimer <= 0) {
+          const n = tcol >= 0 ? nextStepToward(this.stage, ecol, erow, tcol, trow) : null;
+          e.wpCol = n ? n.col : -1;
+          e.wpRow = n ? n.row : -1;
+          e.pathTimer = 0.3;
+        }
         let desired: number;
-        const pursue = e.type.behavior === "chaser" || e.type.behavior === "approach";
-        if (behavior === "combat" && pursue) {
-          // 追跡タイプ：BFSで「行けるルートの次の一歩」を求めて回り込む（0.4秒ごと再計算）
-          e.pathTimer -= dt;
-          if (e.pathTimer <= 0 || e.wpCol < 0) {
-            const n = nextStepToward(
-              this.stage,
-              Math.floor(e.x / cell),
-              Math.floor(e.y / cell),
-              Math.floor(this.pos.x / cell),
-              Math.floor(this.pos.y / cell),
-            );
-            e.wpCol = n ? n.col : -1;
-            e.wpRow = n ? n.row : -1;
-            e.pathTimer = 0.4;
-          }
-          if (e.wpCol >= 0) {
-            desired = Math.atan2((e.wpRow + 0.5) * cell - e.y, (e.wpCol + 0.5) * cell - e.x);
-          } else {
-            desired = Math.atan2(dy, dx); // 隣接/同セル/到達不可は直接
-          }
-        } else if (behavior === "combat") {
-          desired = Math.atan2(dy, dx);
+        if (e.wpCol >= 0) {
+          desired = Math.atan2((e.wpRow + 0.5) * cell - e.y, (e.wpCol + 0.5) * cell - e.x);
         } else if (behavior === "retreat") {
           desired = Math.atan2(-dy, -dx);
         } else {
-          desired = Math.atan2(e.wanderY, e.wanderX);
+          desired = Math.atan2(dy, dx);
         }
 
         // 壁を擦らず回り込む：希望方向から少しずつ角度をずらし、通れる向きへ進む
@@ -579,11 +620,7 @@ export class Game {
             break;
           }
         }
-        if (!moved && behavior === "wander") {
-          const a = Math.random() * Math.PI * 2;
-          e.wanderX = Math.cos(a);
-          e.wanderY = Math.sin(a);
-        }
+        if (!moved && behavior === "wander") this.pickWanderDest(e);
         if (moved && this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
           this.addTrack(e.x, e.y, moveAngle); // 履帯は移動方向で刻む
           e.tx = e.x;
@@ -596,9 +633,8 @@ export class Game {
           e.stuckTimer += dt;
           if (e.stuckTimer >= 2) {
             e.behavior = "wander";
-            const a = Math.random() * Math.PI * 2;
-            e.wanderX = Math.cos(a);
-            e.wanderY = Math.sin(a);
+            this.pickWanderDest(e);
+            e.pathTimer = 0; // すぐ経路再計算
             e.behaviorTimer = BEHAVIOR_MIN + Math.random() * (BEHAVIOR_MAX - BEHAVIOR_MIN);
             e.stuckTimer = 0;
           }
@@ -615,21 +651,45 @@ export class Game {
       }
 
       // 射撃：自機が近いほど発射間隔を短く。タイプ設定（バンク/精度/弾速/反射/連射）に従う
+      const fireInterval = near ? t.fireInterval * NEAR_FIRE_MULT : t.fireInterval;
       e.cd -= dt;
-      if (e.cd <= 0) {
-        let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
+      if (e.cd <= 0 && e.burstLeft <= 0) {
+        const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
         if (dir) {
-          if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
-          const baseAngle = Math.atan2(dir.y, dir.x);
-          const spread = 0.14;
-          for (let i = 0; i < t.bullets; i++) {
-            const a = baseAngle + (i - (t.bullets - 1) / 2) * spread; // 扇状の同時発射
-            this.spawnBullet(e.x, e.y, { x: Math.cos(a), y: Math.sin(a) }, 1, t.bulletSpeed, t.bounces);
+          if (t.salvo && t.bullets > 1) {
+            // 砲台複数門：扇状に同時発射
+            const baseAngle = Math.atan2(dir.y, dir.x);
+            const spread = 0.14;
+            for (let i = 0; i < t.bullets; i++) {
+              const a = baseAngle + (i - (t.bullets - 1) / 2) * spread;
+              this.spawnBullet(e.x, e.y, { x: Math.cos(a), y: Math.sin(a) }, 1, t.bulletSpeed, t.bounces, this.er(e));
+            }
+            e.facing = baseAngle;
+            e.cd = fireInterval;
+          } else {
+            e.burstLeft = t.bullets; // 逐次連射を開始
+            e.burstTimer = 0;
           }
-          e.facing = baseAngle;
-          e.cd = near ? t.fireInterval * NEAR_FIRE_MULT : t.fireInterval;
         } else {
           e.cd = 0.3; // 射線が無いときは少し待って再試行
+        }
+      }
+      // 逐次連射：先に出した弾に当たらない最短間隔で1発ずつ
+      if (e.burstLeft > 0) {
+        e.burstTimer -= dt;
+        if (e.burstTimer <= 0) {
+          let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
+          if (dir) {
+            if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
+            this.spawnBullet(e.x, e.y, dir, 1, t.bulletSpeed, t.bounces, this.er(e));
+            e.facing = Math.atan2(dir.y, dir.x);
+            e.burstLeft--;
+            e.burstTimer = Math.max(BURST_GAP, (2 * BULLET_RADIUS + 4) / t.bulletSpeed); // 連射間隔
+            if (e.burstLeft <= 0) e.cd = fireInterval;
+          } else {
+            e.burstLeft = 0; // 射線が切れたら連射中断
+            e.cd = 0.3;
+          }
         }
       }
 
@@ -669,6 +729,11 @@ export class Game {
     }
   }
 
+  // HPが残る敵に当たった時の小さなヒット表示。
+  private hitFx(x: number, y: number): void {
+    this.explosions.push({ x, y, t: 0, maxR: TANK_RADIUS, life: 0.18 });
+  }
+
   private ageExplosions(dt: number): void {
     for (const ex of this.explosions) ex.t += dt;
     this.explosions = this.explosions.filter((ex) => ex.t < ex.life);
@@ -690,6 +755,7 @@ export class Game {
       e.y = e.hy;
       e.tx = e.hx;
       e.ty = e.hy;
+      e.hp = e.type.hp; // 生き残った敵のHPも全回復
       e.cd = 0;
       e.facing = Math.PI / 2;
     }
@@ -721,10 +787,10 @@ export class Game {
 
   // 移動型の敵が進めない位置か：壁／自機／他の戦車と重なる。
   private moverBlocked(px: number, py: number, self: Enemy): boolean {
-    const r2 = TANK_RADIUS * 2;
-    if (circleHitsSolid(this.stage, px, py, TANK_RADIUS)) return true;
-    if (this.dist(px, py, this.pos.x, this.pos.y) < r2) return true;
-    if (this.enemies.some((o) => o !== self && this.dist(px, py, o.x, o.y) < r2)) return true;
+    const rs = this.er(self);
+    if (circleHitsSolid(this.stage, px, py, rs)) return true;
+    if (this.dist(px, py, this.pos.x, this.pos.y) < rs + TANK_RADIUS) return true;
+    if (this.enemies.some((o) => o !== self && this.dist(px, py, o.x, o.y) < rs + this.er(o))) return true;
     // 自分が置いた地雷の爆風圏には踏み込まない（外へ離れる方向は許可）
     for (const m of this.mines) {
       if (m.owner !== self) continue;
@@ -735,8 +801,8 @@ export class Game {
   }
 
   private hitsEnemy(px: number, py: number): boolean {
-    const minDist = TANK_RADIUS * 2;
     for (const e of this.enemies) {
+      const minDist = TANK_RADIUS + this.er(e);
       const dx = px - e.x;
       const dy = py - e.y;
       if (dx * dx + dy * dy < minDist * minDist) return true;
@@ -758,7 +824,7 @@ export class Game {
     for (const dm of this.deathMarks) drawCross(ctx, dm.x, dm.y, dm.color);
     for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
-      drawTank(ctx, e.x, e.y, e.type.color, e.facing);
+      drawTank(ctx, e.x, e.y, e.type.color, e.facing, this.er(e));
     }
     this.drawAimLine(ctx);
     // 大破演出中・ゲームオーバー後は自機を描かない（破壊された）

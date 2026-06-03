@@ -48,6 +48,8 @@ export const ENEMY_TYPES: Record<string, EnemyType> = {
   purple: { key: "purple", name: "紫", color: "#8e44ad", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 2, hp: 1, invisible: false },
   // 9. 黒：超高速・追跡・最速2連射・反射0ミサイル・地雷2（最強）
   black: { key: "black", name: "黒", color: "#222831", speed: 180, behavior: "chaser", fireInterval: 0.6, bullets: 2, bounces: 0, bulletSpeed: FAST_BULLET, bank: false, aimJitter: 0.05, maxMines: 2, hp: 1, invisible: false },
+  // 8. 白：紫と同スペック＋開始1秒後に煙とともに透明化（轍と発射位置で推測）
+  white: { key: "white", name: "白(透明)", color: "#eef0f2", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 2, hp: 1, invisible: true },
   // 10. 赤黒紫：普通速・バンクあり・砲台5門同時・普通弾・HP3
   boss: { key: "boss", name: "ボス", color: "#5b2c4d", speed: 90, behavior: "balanced", fireInterval: 1.6, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, scale: 2, aimJitter: 0.06, maxMines: 0, hp: 5, invisible: false, salvo: true },
 };

@@ -8,7 +8,7 @@ function freshStage() {
   return fillBorderSteel(createEmptyStage(5, 4, 64));
 }
 function bullet(p: Partial<Bullet>): Bullet {
-  return { x: 0, y: 0, vx: 0, vy: 0, bounces: 1, owner: 0, age: 0, ...p };
+  return { x: 0, y: 0, vx: 0, vy: 0, bounces: 1, owner: 0, age: 0, group: 0, ...p };
 }
 
 describe("advanceBullet", () => {

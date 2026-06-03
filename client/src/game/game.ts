@@ -21,6 +21,7 @@ import {
   ENEMY_MINE_INTERVAL,
   ENEMY_NEAR,
   EXPLOSION_LIFE,
+  FIRE_STUN,
   NEAR_FIRE_MULT,
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
@@ -31,6 +32,7 @@ import {
   MINE_RADIUS,
   INTRO_PAUSE,
   BURST_GAP,
+  CLOAK_TIME,
   MAX_TRACKS,
   RESPAWN_PAUSE,
   SELF_GRACE,
@@ -56,6 +58,7 @@ interface Enemy {
   ty: number;
   type: EnemyType; // タイプ設定（色・速度・射撃など）
   hp: number; // 残りHP（被弾で減り0で破壊）
+  age: number; // 出現からの経過秒（透明化タイミング用）
   cd: number; // 発射クールダウン残り(秒)
   facing: number; // 砲塔の向き
   behavior: RuntimeBehavior; // 現在の行動軸（移動するタイプのみ使用）
@@ -66,6 +69,7 @@ interface Enemy {
   stuckRow: number;
   stuckTimer: number; // 同じマスに留まっている秒
   mineCd: number; // 地雷設置のクールダウン残り(秒)
+  fireStun: number; // 発射直後の停止時間の残り(秒)
   burstLeft: number; // 連射の残り発数
   burstTimer: number; // 次の連射弾までの秒
   wpCol: number; // 追跡経路の次の一歩（-1=なし）
@@ -138,6 +142,7 @@ function makeEnemies(stage: StageData): Enemy[] {
       ty: c.y,
       type: ty,
       hp: ty.hp,
+      age: 0,
       cd: 0,
       facing: Math.PI / 2,
       behavior: "combat",
@@ -148,6 +153,7 @@ function makeEnemies(stage: StageData): Enemy[] {
       stuckRow: Math.floor(c.y / stage.grid.cell),
       stuckTimer: 0,
       mineCd: 1.5,
+      fireStun: 0,
       burstLeft: 0,
       burstTimer: 0,
       wpCol: -1,
@@ -166,11 +172,13 @@ export class Game {
   private enemies: Enemy[];
   private bullets: Bullet[] = [];
   private mines: { x: number; y: number; t: number; owner: Enemy | null }[] = [];
-  private explosions: { x: number; y: number; t: number; maxR: number; life: number }[] = [];
+  private explosions: { x: number; y: number; t: number; maxR: number; life: number; color?: string }[] = [];
   private blastR: number;
   private facing = -Math.PI / 2; // 砲塔の向き（描画）
   private heading = -Math.PI / 2; // 車体（キャタピラ）の向き＝移動方向
   private wasMoving = false; // 前フレーム動いていたか（移動中の方向転換判定）
+  private fireStun = 0; // 発射直後の停止時間の残り(秒)
+  private bulletGroup = 0; // 発射グループの採番（同一斉射＝同番号）
   private acc = 0;
   private last = 0;
   private lives = SOLO_LIVES;
@@ -278,9 +286,10 @@ export class Game {
     // 移動（戦車らしい旋回モデル）：車体の向き(heading)を入力方向へ旋回させてから前進。
     // 同方向の継続/再開は遅延なし。停止から別方向は向きを変える時間(=旋回)が要る。
     // 移動中の方向転換は止まらず曲がる（角ばって曲がる）。
+    if (this.fireStun > 0) this.fireStun -= dt; // 発射直後は停止
     const a = this.input.axis();
     const mag = Math.hypot(a.x, a.y);
-    if (mag > 0.05) {
+    if (mag > 0.05 && this.fireStun <= 0) {
       const inAng = Math.atan2(a.y, a.x);
       // 車体の「軸」に対する前後の角度差。前後どちらかに合っていれば旋回不要（＝逆方向は即バック）。
       const diffF = angleNorm(inAng - this.heading);
@@ -360,7 +369,7 @@ export class Game {
       if (removed.has(i)) continue;
       for (let j = i + 1; j < alive.length; j++) {
         if (removed.has(j)) continue;
-        if (alive[i].owner === alive[j].owner) continue; // 同じ陣営の弾（連射含む）は相殺しない
+        if (alive[i].group === alive[j].group) continue; // 同じ一斉射の弾は相殺しない（別射なら自弾同士でも相殺）
         if (bulletsCollide(alive[i], alive[j])) {
           removed.add(i);
           removed.add(j);
@@ -496,8 +505,10 @@ export class Game {
   }
 
   private fire(dir: { x: number; y: number }): void {
+    this.bulletGroup++;
     this.spawnBullet(this.pos.x, this.pos.y, dir, 0);
     this.facing = Math.atan2(dir.y, dir.x);
+    this.fireStun = FIRE_STUN;
   }
 
   // owner: 0=自機, 1=敵。砲口（半径の外側）から発射する。弾速・反射回数は指定可。
@@ -519,6 +530,7 @@ export class Game {
       bounces,
       owner,
       age: 0,
+      group: this.bulletGroup,
     });
   }
 
@@ -553,8 +565,16 @@ export class Game {
       const t = e.type;
       const near = this.dist(e.x, e.y, this.pos.x, this.pos.y) < ENEMY_NEAR;
 
-      // 移動（speed>0 のタイプのみ）：行動軸＝戦闘/退避/無目的をランダム切替
-      if (t.speed > 0) {
+      // 透明タイプ：CLOAK_TIME 経過の瞬間に煙を出して消える
+      const prevAge = e.age;
+      e.age += dt;
+      if (t.invisible && prevAge < CLOAK_TIME && e.age >= CLOAK_TIME) {
+        this.explosions.push({ x: e.x, y: e.y, t: 0, maxR: this.er(e) * 1.8, life: 0.6, color: "rgba(150,152,160,0.8)" });
+      }
+
+      if (e.fireStun > 0) e.fireStun -= dt; // 発射直後は停止
+      // 移動（speed>0 かつ発射停止中でない）：行動軸＝戦闘/退避/無目的をランダム切替
+      if (t.speed > 0 && e.fireStun <= 0) {
         e.behaviorTimer -= dt;
         if (e.behaviorTimer <= 0) this.pickBehavior(e);
         const dx = this.pos.x - e.x;
@@ -657,7 +677,8 @@ export class Game {
         const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
         if (dir) {
           if (t.salvo && t.bullets > 1) {
-            // 砲台複数門：扇状に同時発射
+            // 砲台複数門：扇状に同時発射（同じグループ＝互いに相殺しない）
+            this.bulletGroup++;
             const baseAngle = Math.atan2(dir.y, dir.x);
             const spread = 0.14;
             for (let i = 0; i < t.bullets; i++) {
@@ -665,9 +686,14 @@ export class Game {
               this.spawnBullet(e.x, e.y, { x: Math.cos(a), y: Math.sin(a) }, 1, t.bulletSpeed, t.bounces, this.er(e));
             }
             e.facing = baseAngle;
+            e.fireStun = FIRE_STUN;
             e.cd = fireInterval;
           } else {
-            e.burstLeft = t.bullets; // 逐次連射を開始
+            // 逐次連射：発数は毎回ランダム（1〜最大）。自機が近いほど最大に寄る
+            let n = 1;
+            const p = near ? 0.75 : 0.35;
+            while (n < t.bullets && Math.random() < p) n++;
+            e.burstLeft = n;
             e.burstTimer = 0;
           }
         } else {
@@ -681,8 +707,10 @@ export class Game {
           let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank);
           if (dir) {
             if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
+            this.bulletGroup++;
             this.spawnBullet(e.x, e.y, dir, 1, t.bulletSpeed, t.bounces, this.er(e));
             e.facing = Math.atan2(dir.y, dir.x);
+            e.fireStun = FIRE_STUN;
             e.burstLeft--;
             e.burstTimer = Math.max(BURST_GAP, (2 * BULLET_RADIUS + 4) / t.bulletSpeed); // 連射間隔
             if (e.burstLeft <= 0) e.cd = fireInterval;
@@ -756,6 +784,7 @@ export class Game {
       e.tx = e.hx;
       e.ty = e.hy;
       e.hp = e.type.hp; // 生き残った敵のHPも全回復
+      e.age = 0; // 透明タイプは再び1秒だけ見える
       e.cd = 0;
       e.facing = Math.PI / 2;
     }
@@ -824,6 +853,7 @@ export class Game {
     for (const dm of this.deathMarks) drawCross(ctx, dm.x, dm.y, dm.color);
     for (const m of this.mines) drawMine(ctx, m.x, m.y, m.t);
     for (const e of this.enemies) {
+      if (e.type.invisible && e.age >= CLOAK_TIME) continue; // 透明化中は描かない（轍・弾で推測）
       drawTank(ctx, e.x, e.y, e.type.color, e.facing, this.er(e));
     }
     this.drawAimLine(ctx);
@@ -834,7 +864,7 @@ export class Game {
     for (const b of this.bullets) {
       drawBullet(ctx, b.x, b.y, Math.atan2(b.vy, b.vx), b.owner === 0 ? COLORS.bulletP : COLORS.bulletE);
     }
-    for (const ex of this.explosions) drawExplosion(ctx, ex.x, ex.y, ex.t / ex.life, ex.maxR);
+    for (const ex of this.explosions) drawExplosion(ctx, ex.x, ex.y, ex.t / ex.life, ex.maxR, ex.color);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.input.drawSticks(ctx);

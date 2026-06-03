@@ -117,10 +117,11 @@ export function drawExplosion(
   y: number,
   progress: number,
   maxR: number,
+  color = COLORS.explosion,
 ): void {
   ctx.save();
   ctx.globalAlpha = 1 - progress;
-  ctx.fillStyle = COLORS.explosion;
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(x, y, maxR * (0.4 + 0.6 * progress), 0, Math.PI * 2);
   ctx.fill();

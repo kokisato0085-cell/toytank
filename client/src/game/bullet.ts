@@ -13,6 +13,7 @@ export interface Bullet {
   bounces: number; // 残り反射回数
   owner: number; // 発射者（0=自機, 1..=敵）。FF・自爆猶予に使う
   age: number; // 経過秒
+  group: number; // 発射グループ（同一斉射は同じ番号＝相殺しない）
 }
 
 // 1ステップ進める。壁（鋼・壊せる壁とも）で反射する。弾が消滅すべきなら false を返す。

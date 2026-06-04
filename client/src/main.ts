@@ -6,6 +6,7 @@ import { sampleStage } from "./game/sampleStage";
 import { Game } from "./game/game";
 import { validateStage } from "./stage/validate";
 import { listSavedStages, loadCampaign, loadSavedStage, stageLoadErrors } from "./game/stageStore";
+import { isMuted, setMuted, toggleMuted, unlockSound } from "./game/sound";
 import type { StageData } from "./stage/types";
 
 const SAMPLE_KEY = "__sample__";
@@ -112,6 +113,32 @@ if (campaignMode) {
 game.start();
 
 document.getElementById("btn-mine")?.addEventListener("click", () => game.layMine());
+
+// 音：最初のユーザー操作で再生を解除（スマホの自動再生制約対応）
+const unlock = (): void => {
+  unlockSound();
+  window.removeEventListener("pointerdown", unlock);
+  window.removeEventListener("keydown", unlock);
+  window.removeEventListener("touchstart", unlock);
+};
+window.addEventListener("pointerdown", unlock);
+window.addEventListener("keydown", unlock);
+window.addEventListener("touchstart", unlock);
+
+// ミュート切替ボタン
+const muteBtn = document.getElementById("btn-mute");
+if (muteBtn) {
+  const sync = (): void => {
+    muteBtn.textContent = isMuted() ? "🔇 音 OFF" : "🔊 音 ON";
+  };
+  setMuted(isMuted()); // 保存値を反映
+  sync();
+  muteBtn.addEventListener("click", () => {
+    toggleMuted();
+    unlockSound(); // 解除も兼ねる
+    sync();
+  });
+}
 
 function restart(): void {
   if (campaignMode) {

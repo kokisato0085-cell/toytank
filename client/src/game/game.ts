@@ -10,6 +10,7 @@ import { circleHitsSolid, isSolidCell, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
+import { playSound } from "./sound";
 import { Input } from "./input";
 import {
   BEHAVIOR_MAX,
@@ -280,6 +281,7 @@ export class Game {
       if (this.interTimer <= 0) {
         if (this.pendingGameOver) {
           this.state = "gameover";
+          playSound("gameover", { volume: 0.7 }); // ゲームオーバー音
           this.onGameOver?.();
         } else {
           this.respawnPlayer(); // 自機だけ復活（敵・壁は維持）
@@ -358,7 +360,9 @@ export class Game {
     const alive: Bullet[] = [];
     const mineHits: number[] = []; // 弾が当たった地雷（即起爆）
     for (const b of this.bullets) {
+      const prevBounces = b.bounces;
       if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
+      if (b.bounces < prevBounces) playSound("bounce", { volume: 0.4, throttleMs: 50 }); // 跳弾音
       const ei = this.enemies.findIndex((e) => this.dist(b.x, b.y, e.x, e.y) < this.er(e) + BULLET_RADIUS);
       if (ei >= 0) {
         const en = this.enemies[ei];
@@ -418,6 +422,7 @@ export class Game {
     // クリア判定（敵を全滅）
     if (this.enemies.length === 0) {
       this.state = "cleared";
+      playSound("clear", { volume: 0.7 }); // ステージクリア音
       this.onStageClear?.(); // キャンペーンなら次ステージへ（loadStageで再びplayingになる）
     }
   }
@@ -426,6 +431,7 @@ export class Game {
   layMine(): void {
     if (this.mines.filter((m) => m.owner === null).length >= MAX_MINES) return;
     this.mines.push({ x: this.pos.x, y: this.pos.y, t: 0, owner: null });
+    playSound("mine", { volume: 0.5 }); // 地雷設置音
   }
 
   private updateMines(dt: number): void {
@@ -445,6 +451,7 @@ export class Game {
     while (queue.length) {
       const m = this.mines[queue.pop()!];
       this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
+      playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 地雷爆発音（連鎖は間引き）
       // 1) 壊すブロックを「破壊前のタイル」で確定（手前の壁が奥を守る＝貫通させない）
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
@@ -524,6 +531,7 @@ export class Game {
     this.kills[e.type.key] = (this.kills[e.type.key] ?? 0) + 1;
     this.spawnDeathFx(e.x, e.y); // 敵も大破演出
     this.deathMarks.push({ x: e.x, y: e.y, color: "#ffffff" });
+    playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 戦車大破音（爆発と同じ）
   }
 
   private fire(dir: { x: number; y: number }): void {
@@ -554,6 +562,7 @@ export class Game {
       age: 0,
       group: this.bulletGroup,
     });
+    playSound("shot", { volume: 0.5, throttleMs: 45 }); // 発射音（同時多発は間引き）
   }
 
   // 行動軸をタイプの性格に応じた重みで切り替える。
@@ -752,6 +761,7 @@ export class Game {
         if (e.mineCd <= 0) {
           if (this.mines.filter((m) => m.owner === e).length < t.maxMines) {
             this.mines.push({ x: e.x, y: e.y, t: 0, owner: e });
+            playSound("mine", { volume: 0.35, throttleMs: 120 }); // 敵の地雷設置音（控えめ）
             e.mineCd = ENEMY_MINE_INTERVAL;
           } else {
             e.mineCd = 1.0; // 満杯なら少し待つ
@@ -764,6 +774,7 @@ export class Game {
   private onPlayerDeath(): void {
     this.lives--;
     this.spawnDeathFx(this.pos.x, this.pos.y); // 自機が大破する演出
+    playSound("miss", { volume: 0.7 }); // 被弾ミス音
     this.pendingGameOver = this.lives <= 0;
     this.state = "dying"; // 演出 → loop で gameover or respawning へ
     this.interTimer = DEATH_FX;

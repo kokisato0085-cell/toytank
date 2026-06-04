@@ -6,7 +6,7 @@ import { TILE } from "../stage/types";
 import type { StageData, TileValue } from "../stage/types";
 import { ENEMY_TYPES, getEnemyType, type EnemyType } from "../stage/enemyTypes";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
-import { circleHitsSolid, isSolidCell, slide } from "./physics";
+import { circleHitsSolid, isSolidCell, isWallCell, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
@@ -19,6 +19,8 @@ import {
   BULLET_SPEED,
   DEATH_FX,
   ENEMY_CLOSE,
+  ENEMY_STANDOFF,
+  ENEMY_STANDOFF_BREAK,
   ENEMY_MINE_INTERVAL,
   ENEMY_NEAR,
   EXPLOSION_LIFE,
@@ -79,6 +81,7 @@ interface Enemy {
   wpCol: number; // 追跡経路の次の一歩（-1=なし）
   wpRow: number;
   pathTimer: number; // 経路を再計算するまでの秒
+  moving: boolean; // 前フレーム実際に動いたか（プレイヤー同様の旋回モデル用）
 }
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
@@ -157,6 +160,7 @@ function makeEnemies(stage: StageData): Enemy[] {
       wpCol: -1,
       wpRow: -1,
       pathTimer: 0,
+      moving: false,
     };
   });
 }
@@ -176,6 +180,7 @@ export class Game {
   private heading = -Math.PI / 2; // 車体（キャタピラ）の向き＝移動方向
   private wasMoving = false; // 前フレーム動いていたか（移動中の方向転換判定）
   private enemyMoving = false; // このフレーム、敵が1体でも移動したか（走行音用）
+  private playerIdleTime = 0; // 自機が動いていない経過秒（角待ち検知。一定で敵のスタンドオフ解除）
   private fireStun = 0; // 発射直後の停止時間の残り(秒)
   private bulletGroup = 0; // 発射グループの採番（同一斉射＝同番号）
   private acc = 0;
@@ -359,6 +364,8 @@ export class Game {
     } else {
       this.wasMoving = false;
     }
+    // 角待ち検知：自機が動かない時間を計測（一定時間でスタンドオフ解除）
+    this.playerIdleTime = this.wasMoving ? 0 : this.playerIdleTime + dt;
     // 照準中は砲塔を照準方向へ（スマホ=エイムパッド / PC=マウスカーソル）
     const ad = this.playerAimDir();
     if (ad) this.facing = Math.atan2(ad.y, ad.x);
@@ -622,6 +629,127 @@ export class Game {
     e.wdCol = -1;
   }
 
+  // 戦車らしい移動（プレイヤーと同じ旋回モデル）。車体の向き(heading)を目標方向へ
+  // 旋回レート上限で回し、前後どちらか近い軸へ寄せて、整列していれば（or 移動継続中なら）スライド前進。
+  // 急な方向転換はしづらく、壁では擦りながら進む（詰まらない）。
+  private driveTank(
+    x: number,
+    y: number,
+    heading: number,
+    desiredAng: number,
+    speed: number,
+    dt: number,
+    wasMoving: boolean,
+    blocked: (px: number, py: number) => boolean,
+  ): { x: number; y: number; heading: number; moved: boolean } {
+    const diffF = angleNorm(desiredAng - heading);
+    const diffB = angleNorm(desiredAng - heading - Math.PI);
+    const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
+    const turnErr = forwardCloser ? diffF : diffB;
+    const maxTurn = TANK_TURN_RATE * dt;
+    heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
+    const aligned =
+      Math.min(Math.abs(angleNorm(desiredAng - heading)), Math.abs(angleNorm(desiredAng - heading - Math.PI))) <
+      TANK_TURN_ALIGN;
+    let moved = false;
+    if (wasMoving || aligned) {
+      const moveDir = forwardCloser ? heading : heading + Math.PI;
+      const step = speed * dt;
+      const slid = slide(x, y, x + Math.cos(moveDir) * step, y + Math.sin(moveDir) * step, blocked);
+      if (Math.hypot(slid.x - x, slid.y - y) > step * 0.15) {
+        x = slid.x;
+        y = slid.y;
+        moved = true;
+      }
+    }
+    return { x, y, heading, moved };
+  }
+
+  // プレイヤーの弾(b)が、反射も込みで敵(e)の危険圏(danger)に入るかを予測。
+  // 入るなら、その接近時点の弾の進行方向(ux,uy)・接近位置(px,py)・到達秒(t)を返す。来なければ null。
+  private predictBulletApproach(
+    b: Bullet,
+    e: Enemy,
+    danger: number,
+  ): { ux: number; uy: number; px: number; py: number; t: number } | null {
+    const cell = this.stage.grid.cell;
+    const speed = Math.hypot(b.vx, b.vy) || 1;
+    let ux = b.vx / speed;
+    let uy = b.vy / speed;
+    let x = b.x;
+    let y = b.y;
+    let bounces = b.bounces;
+    const step = cell * 0.2;
+    const horizon = speed * 1.5; // 約1.5秒先まで警戒（シルバーは過敏に避ける）
+    let traveled = 0;
+    const guard = Math.ceil(horizon / step) + 8;
+    for (let s = 0; s < guard && traveled < horizon; s++) {
+      if (Math.hypot(x - e.x, y - e.y) < danger) {
+        return { ux, uy, px: x, py: y, t: traveled / speed };
+      }
+      let nx = x + ux * step;
+      let ny = y + uy * step;
+      {
+        const col = Math.floor(nx / cell);
+        const row = Math.floor(y / cell);
+        if (isWallCell(this.stage, col, row)) {
+          if (bounces <= 0) return null; // 反射しきって消える＝以降は脅威にならない
+          bounces--;
+          ux = -ux;
+          nx = x;
+        }
+      }
+      {
+        const col = Math.floor(nx / cell);
+        const row = Math.floor(ny / cell);
+        if (isWallCell(this.stage, col, row)) {
+          if (bounces <= 0) return null;
+          bounces--;
+          uy = -uy;
+          ny = y;
+        }
+      }
+      traveled += Math.hypot(nx - x, ny - y);
+      x = nx;
+      y = ny;
+    }
+    return null;
+  }
+
+  // 高知能タイプ：最も差し迫ったプレイヤー弾を弾道に対し直角へかわす。回避移動したら true。
+  private computeDodge(e: Enemy, dt: number): boolean {
+    const danger = this.er(e) + BULLET_RADIUS + 34; // 危険半径（広め＝過敏に避ける）
+    let best: { ux: number; uy: number; px: number; py: number; t: number } | null = null;
+    for (const b of this.bullets) {
+      if (b.owner !== 0) continue; // プレイヤーの弾だけ警戒
+      const th = this.predictBulletApproach(b, e, danger);
+      if (th && (!best || th.t < best.t)) best = th;
+    }
+    if (!best) return false; // 脅威なし＝通常行動へ
+    // 弾の進行方向に直角の2方向のうち、敵がいる側（＝線から離れる側）へ逃げる
+    const px = -best.uy;
+    const py = best.ux;
+    const side = (e.x - best.px) * px + (e.y - best.py) * py;
+    const evadeAng = Math.atan2(side >= 0 ? py : -py, side >= 0 ? px : -px);
+    // プレイヤーと同じ旋回モデルで回避（回避速度は等速）。壁際でもスライドで擦りながら避ける。
+    const blocked = (qx: number, qy: number): boolean => this.moverBlocked(qx, qy, e);
+    const r = this.driveTank(e.x, e.y, e.bodyAngle, evadeAng, e.type.speed, dt, e.moving, blocked);
+    e.x = r.x;
+    e.y = r.y;
+    e.bodyAngle = r.heading;
+    e.moving = r.moved;
+    if (r.moved) {
+      this.enemyMoving = true;
+      if (this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
+        this.addTrack(e.x, e.y, e.bodyAngle);
+        e.tx = e.x;
+        e.ty = e.y;
+      }
+    }
+    // 脅威がある間は弾避けを最優先（通常移動へは戻さない＝壁際でのかくつき防止）
+    return true;
+  }
+
   private updateEnemies(dt: number): void {
     this.enemyMoving = false; // 毎フレーム集計し直す（走行音用）
     for (const e of this.enemies) {
@@ -638,6 +766,9 @@ export class Game {
       if (e.fireStun > 0) e.fireStun -= dt; // 発射直後は停止
       // 移動（speed>0 かつ発射停止中でない）：行動軸＝戦闘/退避/無目的をランダム切替
       if (t.speed > 0 && e.fireStun <= 0) {
+        // シルバー等：プレイヤーの弾（反射軌道含む）を予測回避。回避したフレームは通常移動しない
+        const dodged = t.dodge ? this.computeDodge(e, dt) : false;
+        if (!dodged) {
         e.behaviorTimer -= dt;
         if (e.behaviorTimer <= 0) this.pickBehavior(e);
         const dx = this.pos.x - e.x;
@@ -658,7 +789,14 @@ export class Game {
         // 行動に応じた目的セル（戦闘=自機 / 退避=離れた床 / 徘徊=ランダム床）
         let tcol: number;
         let trow: number;
-        if (behavior === "retreat") {
+        // 角待ち（自機が一定時間動かない）なら、円内でも詰める／回り込むのを許可
+        const camping = this.playerIdleTime >= ENEMY_STANDOFF_BREAK;
+        if (d < ENEMY_STANDOFF && !camping) {
+          // プレイヤー周囲の円内：詰めない・止まらない・厳密な距離保持もしない＝適当に徘徊する
+          if (e.wdCol < 0 || (ecol === e.wdCol && erow === e.wdRow)) this.pickWanderDest(e);
+          tcol = e.wdCol;
+          trow = e.wdRow;
+        } else if (behavior === "retreat") {
           const m = d || 1;
           tcol = Math.max(0, Math.min(this.stage.grid.cols - 1, Math.floor((e.x - (dx / m) * cell * 4) / cell)));
           trow = Math.max(0, Math.min(this.stage.grid.rows - 1, Math.floor((e.y - (dy / m) * cell * 4) / cell)));
@@ -687,25 +825,17 @@ export class Game {
           desired = Math.atan2(dy, dx);
         }
 
-        // 壁を擦らず回り込む：希望方向から少しずつ角度をずらし、通れる向きへ進む
-        const step = t.speed * dt;
-        let moved = false;
-        let moveAngle = desired;
-        for (const off of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6]) {
-          const a = desired + off;
-          const tx = e.x + Math.cos(a) * step;
-          const ty = e.y + Math.sin(a) * step;
-          if (!this.moverBlocked(tx, ty, e)) {
-            e.x = tx;
-            e.y = ty;
-            moveAngle = a;
-            moved = true;
-            break;
-          }
-        }
+        // プレイヤーと同じ旋回モデルで移動（急な方向転換はしづらい）。壁ではスライドで擦りながら進む。
+        const blocked = (px: number, py: number): boolean => this.moverBlocked(px, py, e);
+        const r = this.driveTank(e.x, e.y, e.bodyAngle, desired, t.speed, dt, e.moving, blocked);
+        e.x = r.x;
+        e.y = r.y;
+        e.bodyAngle = r.heading; // 止まっていても回頭は進む
+        const moved = r.moved;
+        e.moving = moved;
         if (!moved && behavior === "wander") this.pickWanderDest(e);
         if (moved && this.dist(e.x, e.y, e.tx, e.ty) >= TRACK_GAP) {
-          this.addTrack(e.x, e.y, moveAngle); // 履帯は移動方向で刻む
+          this.addTrack(e.x, e.y, e.bodyAngle); // 履帯は車体向きで刻む
           e.tx = e.x;
           e.ty = e.y;
         }
@@ -727,10 +857,10 @@ export class Game {
           e.stuckTimer = 0;
         }
         if (moved) {
-          e.bodyAngle = moveAngle; // 車体は進行方向
-          e.facing = moveAngle; // 砲塔も普段は進行方向（射線が通れば下で自機へ）
+          e.facing = e.bodyAngle; // 砲塔も普段は車体向き（射線が通れば下で自機へ）
           this.enemyMoving = true; // 走行音：敵が動いている
         }
+        } // end if(!dodged)
       }
       // 射線が通っている時だけ砲塔を自機へ向ける（射撃の構え）
       if (lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) {
@@ -1061,21 +1191,31 @@ export class Game {
     ctx.fillText("撃破数", cx, cy - 34);
 
     const entries = Object.keys(this.kills).map((k) => ({ color: ENEMY_TYPES[k].color, count: this.kills[k] }));
-    const ew = 150;
-    let x = cx - (entries.length * ew) / 2 + ew / 2;
-    ctx.font = "26px sans-serif";
-    for (const e of entries) {
-      drawTankIcon(ctx, x - 34, cy + 10, e.color, 16);
-      ctx.fillStyle = "#fff";
-      ctx.textAlign = "left";
-      ctx.fillText(`× ${e.count}`, x - 2, cy + 10);
-      x += ew;
-    }
+    // 種類が5を超えたら2段に分けて表示（横あふれ防止）
+    const twoRows = entries.length > 5;
+    const perRow = twoRows ? Math.ceil(entries.length / 2) : entries.length;
+    const rows = twoRows ? [entries.slice(0, perRow), entries.slice(perRow)] : [entries];
+    const rowYs = twoRows ? [cy - 2, cy + 40] : [cy + 10];
+    rows.forEach((row, ri) => {
+      if (row.length === 0) return;
+      const ew = Math.min(150, (ctx.canvas.width * 0.92) / row.length);
+      const iconR = Math.max(10, Math.min(16, ew * 0.12));
+      const y = rowYs[ri];
+      let x = cx - (row.length * ew) / 2 + ew / 2;
+      ctx.font = `${Math.round(iconR * 1.4)}px sans-serif`;
+      for (const e of row) {
+        drawTankIcon(ctx, x - ew * 0.3, y, e.color, iconR);
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "left";
+        ctx.fillText(`× ${e.count}`, x - ew * 0.3 + iconR + 6, y);
+        x += ew;
+      }
+    });
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#fff";
     ctx.font = "16px sans-serif";
-    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + 70);
+    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + (twoRows ? 84 : 70));
   }
 
   // 被弾の区切り画面：「ミス！」＋ 残機（自機アイコン×数）。

@@ -21,6 +21,7 @@ export interface EnemyType {
   maxMines: number; // 設置できる地雷数（0=なし。※実装は後段）
   hp: number; // 撃破に必要な命中数
   invisible: boolean; // 透明化（※実装は後段）
+  dodge?: boolean; // true=プレイヤーの弾（反射軌道含む）を予測して回避する高知能AI
 }
 
 const NORMAL_BULLET = 380;
@@ -44,14 +45,16 @@ export const ENEMY_TYPES: Record<string, EnemyType> = {
   yellow: { key: "yellow", name: "黄(地雷)", color: "#e0c020", speed: 100, behavior: "chaser", fireInterval: 1.8, bullets: 1, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: false, aimJitter: 0.1, maxMines: 4, hp: 1, invisible: false },
   // 5. ピンク：高速・攻撃的・3連射（バンクなし）
   pink: { key: "pink", name: "ピンク", color: "#e84fa0", speed: 140, behavior: "approach", fireInterval: 1.0, bullets: 3, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: false, aimJitter: 0.08, maxMines: 0, hp: 1, invisible: false },
-  // 7. 紫：高速攻撃的・超高速5連射・反射1・バンクあり・地雷2
-  purple: { key: "purple", name: "紫", color: "#8e44ad", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 2, hp: 1, invisible: false },
-  // 9. 黒：超高速・追跡・最速2連射・反射0ミサイル・地雷2（最強）
-  black: { key: "black", name: "黒", color: "#222831", speed: 180, behavior: "chaser", fireInterval: 0.6, bullets: 2, bounces: 0, bulletSpeed: FAST_BULLET, bank: false, aimJitter: 0.05, maxMines: 2, hp: 1, invisible: false },
+  // 7. 紫：高速攻撃的・超高速5連射・反射1・バンクあり・地雷なし
+  purple: { key: "purple", name: "紫", color: "#8e44ad", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 0, hp: 1, invisible: false },
+  // 9. 黒：超高速・追跡・最速2連射・反射0ミサイル・地雷なし（最強）
+  black: { key: "black", name: "黒", color: "#222831", speed: 180, behavior: "chaser", fireInterval: 0.6, bullets: 2, bounces: 0, bulletSpeed: FAST_BULLET, bank: false, aimJitter: 0.05, maxMines: 0, hp: 1, invisible: false },
   // 8. 白：紫と同スペック＋開始1秒後に煙とともに透明化（轍と発射位置で推測）
   white: { key: "white", name: "白(透明)", color: "#eef0f2", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 2, hp: 1, invisible: true },
   // 10. 赤黒紫：普通速・バンクあり・砲台5門同時・普通弾・HP3
   boss: { key: "boss", name: "ボス", color: "#5b2c4d", speed: 90, behavior: "balanced", fireInterval: 1.6, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, scale: 2, aimJitter: 0.06, maxMines: 0, hp: 12, invisible: false, salvo: true },
+  // 11. 銀：スペックは紫と同じ。高知能AIでプレイヤーの弾（直線＋反射軌道）を予測回避し、とにかく粘る
+  silver: { key: "silver", name: "銀", color: "#c8ccd4", speed: 130, behavior: "approach", fireInterval: 2.0, bullets: 2, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.12, maxMines: 0, hp: 1, invisible: false, dodge: true },
 };
 
 export const ENEMY_TYPE_KEYS = Object.keys(ENEMY_TYPES);

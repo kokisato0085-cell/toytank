@@ -33,6 +33,7 @@ import {
   MINE_FUSE,
   MINE_RADIUS,
   INTRO_PAUSE,
+  STAGE_CLEAR_PAUSE,
   BURST_GAP,
   CLOAK_TIME,
   MAX_TRACKS,
@@ -47,7 +48,7 @@ import {
   TRACK_GAP,
 } from "./constants";
 
-type GameState = "intro" | "playing" | "dying" | "respawning" | "cleared" | "gameover";
+type GameState = "intro" | "playing" | "dying" | "respawning" | "stageclear" | "cleared" | "gameover";
 
 type RuntimeBehavior = "combat" | "retreat" | "wander";
 
@@ -294,6 +295,16 @@ export class Game {
         this.input.takeMines();
         if (wasRespawning) startBgm(0.2); // 復活でプレイ再開→BGMを頭から（ステージ移行では再開しない）
       }
+    } else if (this.state === "stageclear") {
+      // クリアポップアップ表示 → 待機後に次ステージへ。進む先が無ければ最終リザルトへ
+      this.interTimer -= dt;
+      if (this.interTimer <= 0) {
+        this.onStageClear?.(); // キャンペーン：次ステージをロード（intro/playingへ遷移）
+        if (this.state === "stageclear") {
+          this.state = "cleared"; // 進む先なし＝全クリア → 最終リザルト
+          stopBgm();
+        }
+      }
     }
 
     this.acc += dt;
@@ -368,7 +379,11 @@ export class Game {
     const mineHits: number[] = []; // 弾が当たった地雷（即起爆）
     for (const b of this.bullets) {
       const prevBounces = b.bounces;
-      if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
+      if (!advanceBullet(this.stage, b, dt)) {
+        // 反射回数を使い切った弾が壁に当たって消滅 → 小さく爆発（演出のみ・ダメージなし）
+        this.explosions.push({ x: b.x, y: b.y, t: 0, maxR: BULLET_RADIUS * 2, life: EXPLOSION_LIFE });
+        continue;
+      }
       if (b.bounces < prevBounces) playSound("bounce", { volume: 0.4, throttleMs: 50 }); // 跳弾音（先頭無音は自動スキップ）
       const ei = this.enemies.findIndex((e) => this.dist(b.x, b.y, e.x, e.y) < this.er(e) + BULLET_RADIUS);
       if (ei >= 0) {
@@ -428,10 +443,16 @@ export class Game {
 
     // クリア判定（敵を全滅）
     if (this.enemies.length === 0) {
-      this.state = "cleared";
       playSound("clear", { volume: 0.7 }); // ステージクリア音
-      this.onStageClear?.(); // キャンペーンなら次ステージへ（loadStageで再びplayingになる）
-      if (this.state === "cleared") stopBgm(); // 次へ進まず本当にクリアならBGM終了
+      if (this.onStageClear) {
+        // キャンペーン：ステージ背景を残したままクリアポップアップ → 待機後に次へ（loopで処理）
+        this.state = "stageclear";
+        this.interTimer = STAGE_CLEAR_PAUSE;
+      } else {
+        // 単体ステージ：そのまま最終リザルトへ
+        this.state = "cleared";
+        stopBgm();
+      }
     }
   }
 
@@ -952,12 +973,41 @@ export class Game {
       this.drawMiss(ctx);
       return;
     }
+    if (this.state === "stageclear") {
+      this.drawStageClear(ctx);
+      return;
+    }
     if (this.state === "gameover") {
       this.drawResult(ctx, "GAME OVER", "#ff8080");
       return;
     }
     // cleared
     this.drawResult(ctx, "CLEAR!", "#7CFC9B");
+  }
+
+  // ステージクリアのポップアップ（背景のステージは残したまま中央にパネル）。
+  private drawStageClear(ctx: CanvasRenderingContext2D): void {
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height / 2;
+    const pw = Math.min(360, ctx.canvas.width * 0.8);
+    const ph = 130;
+    // パネル（半透明・角丸風）
+    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillRect(cx - pw / 2, cy - ph / 2, pw, ph);
+    ctx.strokeStyle = "#7CFC9B";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(cx - pw / 2, cy - ph / 2, pw, ph);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#7CFC9B";
+    ctx.font = "bold 30px sans-serif";
+    ctx.fillText("ステージクリア！", cx, cy - 28);
+
+    const totalKills = Object.values(this.kills).reduce((a, b) => a + b, 0);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText(`総撃破数  ${totalKills}`, cx, cy + 18);
   }
 
   // ボスの体力バー（画面上部・中央）。ボスが複数いれば縦に並べる。

@@ -40,4 +40,5 @@ export const TRACK_GAP = 9; // キャタピラ跡を刻む移動間隔(px)
 export const MAX_TRACKS = 1400; // 跡の最大数（超えたら古いものから消す）
 export const RESPAWN_PAUSE = 2.2; // 被弾後、再開までの区切りポーズ(秒)
 export const INTRO_PAUSE = 2.2; // ステージ開始の区切り画面の表示時間(秒)
+export const STAGE_CLEAR_PAUSE = 2.4; // ステージクリアのポップアップ表示時間(秒)
 export const DEATH_FX = 0.85; // 自機が大破する演出の時間(秒)

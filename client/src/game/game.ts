@@ -290,6 +290,8 @@ export class Game {
       if (this.interTimer <= 0) {
         const wasRespawning = this.state === "respawning";
         this.state = "playing";
+        this.input.takeFires(); // 開始直前までに溜まったクリックを破棄（暴発防止）
+        this.input.takeMines();
         if (wasRespawning) startBgm(0.2); // 復活でプレイ再開→BGMを頭から（ステージ移行では再開しない）
       }
     }
@@ -304,7 +306,12 @@ export class Game {
   };
 
   private update(dt: number): void {
-    if (this.state !== "playing") return; // クリア／ゲームオーバー中は停止
+    if (this.state !== "playing") {
+      // 開始前カウントダウン・ミス待機・クリア/GO中のクリックは無効化（再開と同時の暴発防止）
+      this.input.takeFires();
+      this.input.takeMines();
+      return;
+    }
 
     // 移動（戦車らしい旋回モデル）：車体の向き(heading)を入力方向へ旋回させてから前進。
     // 同方向の継続/再開は遅延なし。停止から別方向は向きを変える時間(=旋回)が要る。
@@ -934,6 +941,8 @@ export class Game {
       ctx.fillText(this.stageLabel, ctx.canvas.width - 10, iy);
     }
 
+    this.drawBossBar(ctx); // ボスがいれば体力バー
+
     if (this.state === "playing" || this.state === "dying") return; // 大破演出中は中央表示なし
     if (this.state === "intro") {
       this.drawIntro(ctx);
@@ -949,6 +958,39 @@ export class Game {
     }
     // cleared
     this.drawResult(ctx, "CLEAR!", "#7CFC9B");
+  }
+
+  // ボスの体力バー（画面上部・中央）。ボスが複数いれば縦に並べる。
+  private drawBossBar(ctx: CanvasRenderingContext2D): void {
+    if (this.state !== "playing" && this.state !== "dying") return; // 戦闘中のみ表示
+    const bosses = this.enemies.filter((e) => e.type.key === "boss");
+    if (bosses.length === 0) return;
+    const cw = ctx.canvas.width;
+    const bw = Math.min(420, cw * 0.7); // バー幅
+    const bh = 16;
+    const x = (cw - bw) / 2;
+    let y = 44;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const b of bosses) {
+      const ratio = Math.max(0, Math.min(1, b.hp / b.type.hp));
+      // 枠＋背景
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(x - 2, y - 2, bw + 4, bh + 4);
+      ctx.fillStyle = "#3a3a3a";
+      ctx.fillRect(x, y, bw, bh);
+      // 残量（緑→黄→赤）
+      ctx.fillStyle = ratio > 0.5 ? "#5fd35f" : ratio > 0.25 ? "#e8c020" : "#e74c3c";
+      ctx.fillRect(x, y, bw * ratio, bh);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, bw, bh);
+      // ラベル
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 12px sans-serif";
+      ctx.fillText(`BOSS  ${b.hp} / ${b.type.hp}`, cw / 2, y + bh / 2);
+      y += bh + 8;
+    }
   }
 
   // クリア／ゲームオーバー時のリザルト：色別の戦車アイコン×撃破数。

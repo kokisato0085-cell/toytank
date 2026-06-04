@@ -51,7 +51,7 @@ export const ENEMY_TYPES: Record<string, EnemyType> = {
   // 8. 白：紫と同スペック＋開始1秒後に煙とともに透明化（轍と発射位置で推測）
   white: { key: "white", name: "白(透明)", color: "#eef0f2", speed: 130, behavior: "approach", fireInterval: 0.8, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, aimJitter: 0.1, maxMines: 2, hp: 1, invisible: true },
   // 10. 赤黒紫：普通速・バンクあり・砲台5門同時・普通弾・HP3
-  boss: { key: "boss", name: "ボス", color: "#5b2c4d", speed: 90, behavior: "balanced", fireInterval: 1.6, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, scale: 2, aimJitter: 0.06, maxMines: 0, hp: 5, invisible: false, salvo: true },
+  boss: { key: "boss", name: "ボス", color: "#5b2c4d", speed: 90, behavior: "balanced", fireInterval: 1.6, bullets: 5, bounces: 1, bulletSpeed: NORMAL_BULLET, bank: true, scale: 2, aimJitter: 0.06, maxMines: 0, hp: 12, invisible: false, salvo: true },
 };
 
 export const ENEMY_TYPE_KEYS = Object.keys(ENEMY_TYPES);

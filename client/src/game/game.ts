@@ -10,7 +10,7 @@ import { circleHitsSolid, isSolidCell, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
-import { playSound } from "./sound";
+import { playSound, setLoop } from "./sound";
 import { Input } from "./input";
 import {
   BEHAVIOR_MAX,
@@ -27,6 +27,7 @@ import {
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
   MAX_MINES,
+  MINE_ARM,
   MINE_BLAST_CELLS,
   MINE_BLAST_LIFE,
   MINE_FUSE,
@@ -95,18 +96,11 @@ function rotate(v: { x: number; y: number }, ang: number): { x: number; y: numbe
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
-// HUD/区切り画面用の小さな戦車アイコン（デバイス座標）。砲塔は上向き。
-function drawTankIcon(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, 10, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#222";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x, y - 14);
-  ctx.stroke();
+// HUD/区切り画面用の小さな戦車アイコン（デバイス座標）。本体・砲塔とも上向き。
+// 本編と同じスプライト戦車（drawTank）で描く（未ロード時は図形にフォールバック）。
+function drawTankIcon(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, radius = 9): void {
+  const up = -Math.PI / 2; // 上向き
+  drawTank(ctx, x, y, color, up, up, radius);
 }
 
 // 撃破バッテン印（×）を描く。視認性のため暗いふちどりの上に本体色。
@@ -362,7 +356,7 @@ export class Game {
     for (const b of this.bullets) {
       const prevBounces = b.bounces;
       if (!advanceBullet(this.stage, b, dt)) continue; // 壁で反射しきって消滅
-      if (b.bounces < prevBounces) playSound("bounce", { volume: 0.4, throttleMs: 50 }); // 跳弾音
+      if (b.bounces < prevBounces) playSound("bounce", { volume: 0.4, throttleMs: 50 }); // 跳弾音（先頭無音は自動スキップ）
       const ei = this.enemies.findIndex((e) => this.dist(b.x, b.y, e.x, e.y) < this.er(e) + BULLET_RADIUS);
       if (ei >= 0) {
         const en = this.enemies[ei];
@@ -455,10 +449,12 @@ export class Game {
       // 1) 壊すブロックを「破壊前のタイル」で確定（手前の壁が奥を守る＝貫通させない）
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
-      //    ※設置者は自分の地雷では無傷（owner===null=自機 / それ以外=その敵）
-      if (m.owner !== null && this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
+      //    ※設置者は起動猶予(MINE_ARM)の間だけ自分の地雷で無傷。猶予を過ぎたら自爆もあり得る
+      const armed = m.t >= MINE_ARM; // 起動済みなら設置者にも当たる
+      const selfSafe = !armed; // 置いた直後だけ設置者を保護
+      if ((m.owner !== null || !selfSafe) && this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
       this.enemies = this.enemies.filter((e) => {
-        if (e !== m.owner && this.inBlast(m.x, m.y, e.x, e.y)) {
+        if ((e !== m.owner || !selfSafe) && this.inBlast(m.x, m.y, e.x, e.y)) {
           e.hp--;
           if (e.hp <= 0) {
             this.markKill(e); // 撃破数＋大破演出＋バッテン印
@@ -562,7 +558,7 @@ export class Game {
       age: 0,
       group: this.bulletGroup,
     });
-    playSound("shot", { volume: 0.5, throttleMs: 45 }); // 発射音（同時多発は間引き）
+    playSound("shot", { volume: 0.15, throttleMs: 45 }); // 発射音（音量控えめ・同時多発は間引き）
   }
 
   // 行動軸をタイプの性格に応じた重みで切り替える。
@@ -774,6 +770,7 @@ export class Game {
   private onPlayerDeath(): void {
     this.lives--;
     this.spawnDeathFx(this.pos.x, this.pos.y); // 自機が大破する演出
+    playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 自機の大破音（戦車大破＝爆発と共用）
     playSound("miss", { volume: 0.7 }); // 被弾ミス音
     this.pendingGameOver = this.lives <= 0;
     this.state = "dying"; // 演出 → loop で gameover or respawning へ
@@ -883,6 +880,7 @@ export class Game {
 
   private render(): void {
     const ctx = this.ctx;
+    setLoop("engine", this.state === "playing" && this.wasMoving, 0.3); // 走行音（移動中だけ）
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     renderMap(ctx, this.stage);
     this.drawTracks(ctx);
@@ -959,14 +957,14 @@ export class Game {
     ctx.fillText("撃破数", cx, cy - 34);
 
     const entries = Object.keys(this.kills).map((k) => ({ color: ENEMY_TYPES[k].color, count: this.kills[k] }));
-    const ew = 120;
+    const ew = 150;
     let x = cx - (entries.length * ew) / 2 + ew / 2;
-    ctx.font = "24px sans-serif";
+    ctx.font = "26px sans-serif";
     for (const e of entries) {
-      drawTankIcon(ctx, x - 24, cy + 8, e.color);
+      drawTankIcon(ctx, x - 34, cy + 10, e.color, 16);
       ctx.fillStyle = "#fff";
       ctx.textAlign = "left";
-      ctx.fillText(`× ${e.count}`, x - 4, cy + 8);
+      ctx.fillText(`× ${e.count}`, x - 2, cy + 10);
       x += ew;
     }
 
@@ -989,11 +987,11 @@ export class Game {
     ctx.textBaseline = "middle";
     ctx.fillText("ミス！", cx, cy - 20);
 
-    drawTankIcon(ctx, cx - 26, cy + 18, COLORS.p1);
+    drawTankIcon(ctx, cx - 34, cy + 20, COLORS.p1, 16);
     ctx.fillStyle = "#fff";
     ctx.textAlign = "left";
-    ctx.font = "20px sans-serif";
-    ctx.fillText(`× ${this.lives}`, cx - 8, cy + 18);
+    ctx.font = "22px sans-serif";
+    ctx.fillText(`× ${this.lives}`, cx - 4, cy + 20);
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#ccc";
@@ -1014,30 +1012,18 @@ export class Game {
     ctx.font = "bold 40px sans-serif";
     ctx.fillText(this.stageLabel, cx, cy - 70);
 
-    // 出現する敵（タイプ＝色 ごとの数）
-    const counts: Record<string, number> = {};
-    for (const e of this.enemies) counts[e.type.key] = (counts[e.type.key] ?? 0) + 1;
-    const entries = Object.keys(counts).map((k) => ({ color: ENEMY_TYPES[k].color, count: counts[k] }));
-    const ew = 90;
-    let x = cx - (entries.length * ew) / 2 + ew / 2;
-    ctx.font = "22px sans-serif";
-    for (const e of entries) {
-      ctx.fillStyle = e.color;
-      ctx.beginPath();
-      ctx.arc(x - 16, cy, 13, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.textAlign = "left";
-      ctx.fillText(`×${e.count}`, x, cy);
-      x += ew;
-    }
+    // 出現する敵の総数（敵戦車 × 数）
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.font = "26px sans-serif";
+    ctx.fillText(`敵戦車 × ${this.enemies.length}`, cx, cy);
 
     // 残機（自機アイコン×数）
-    drawTankIcon(ctx, cx - 26, cy + 52, COLORS.p1);
+    drawTankIcon(ctx, cx - 34, cy + 54, COLORS.p1, 16);
     ctx.fillStyle = "#fff";
     ctx.textAlign = "left";
-    ctx.font = "20px sans-serif";
-    ctx.fillText(`× ${this.lives}`, cx - 8, cy + 52);
+    ctx.font = "22px sans-serif";
+    ctx.fillText(`× ${this.lives}`, cx - 4, cy + 54);
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#ccc";

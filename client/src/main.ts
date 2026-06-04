@@ -104,6 +104,7 @@ if (campaignMode) {
     if (idx < campaign.length) {
       game.loadStage(campaign[idx], false); // 残機は引き継ぐ
       game.beginStage(`ステージ ${idx + 1}`);
+      startBgm(0.2); // 次ステージはBGMを頭から
     }
     // 最後のステージをクリアしたら "CLEAR!" のまま（全クリア）
   };

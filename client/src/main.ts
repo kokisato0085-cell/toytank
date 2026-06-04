@@ -6,7 +6,7 @@ import { sampleStage } from "./game/sampleStage";
 import { Game } from "./game/game";
 import { validateStage } from "./stage/validate";
 import { listSavedStages, loadCampaign, loadSavedStage, stageLoadErrors } from "./game/stageStore";
-import { isMuted, setMuted, toggleMuted, unlockSound } from "./game/sound";
+import { isMuted, setMuted, startBgm, toggleMuted, unlockSound } from "./game/sound";
 import type { StageData } from "./stage/types";
 
 const SAMPLE_KEY = "__sample__";
@@ -117,6 +117,7 @@ document.getElementById("btn-mine")?.addEventListener("click", () => game.layMin
 // 音：最初のユーザー操作で再生を解除（スマホの自動再生制約対応）
 const unlock = (): void => {
   unlockSound();
+  startBgm(0.2); // 初回操作でBGM開始（頭から）
   window.removeEventListener("pointerdown", unlock);
   window.removeEventListener("keydown", unlock);
   window.removeEventListener("touchstart", unlock);

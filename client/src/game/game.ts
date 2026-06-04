@@ -10,7 +10,7 @@ import { circleHitsSolid, isSolidCell, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
-import { playSound, setLoop } from "./sound";
+import { playSound, setLoop, startBgm, stopBgm } from "./sound";
 import { Input } from "./input";
 import {
   BEHAVIOR_MAX,
@@ -174,6 +174,7 @@ export class Game {
   private facing = -Math.PI / 2; // 砲塔の向き（描画）
   private heading = -Math.PI / 2; // 車体（キャタピラ）の向き＝移動方向
   private wasMoving = false; // 前フレーム動いていたか（移動中の方向転換判定）
+  private enemyMoving = false; // このフレーム、敵が1体でも移動したか（走行音用）
   private fireStun = 0; // 発射直後の停止時間の残り(秒)
   private bulletGroup = 0; // 発射グループの採番（同一斉射＝同番号）
   private acc = 0;
@@ -226,6 +227,7 @@ export class Game {
     if (resetLives) {
       this.lives = SOLO_LIVES;
       this.kills = {}; // 新しいランの開始
+      startBgm(0.2); // リセット（新しいラン）はBGMを頭から
     }
     this.resetStage();
     this.state = "playing";
@@ -285,7 +287,11 @@ export class Game {
       }
     } else if (this.state === "intro" || this.state === "respawning") {
       this.interTimer -= dt;
-      if (this.interTimer <= 0) this.state = "playing";
+      if (this.interTimer <= 0) {
+        const wasRespawning = this.state === "respawning";
+        this.state = "playing";
+        if (wasRespawning) startBgm(0.2); // 復活でプレイ再開→BGMを頭から（ステージ移行では再開しない）
+      }
     }
 
     this.acc += dt;
@@ -418,6 +424,7 @@ export class Game {
       this.state = "cleared";
       playSound("clear", { volume: 0.7 }); // ステージクリア音
       this.onStageClear?.(); // キャンペーンなら次ステージへ（loadStageで再びplayingになる）
+      if (this.state === "cleared") stopBgm(); // 次へ進まず本当にクリアならBGM終了
     }
   }
 
@@ -588,6 +595,7 @@ export class Game {
   }
 
   private updateEnemies(dt: number): void {
+    this.enemyMoving = false; // 毎フレーム集計し直す（走行音用）
     for (const e of this.enemies) {
       const t = e.type;
       const near = this.dist(e.x, e.y, this.pos.x, this.pos.y) < ENEMY_NEAR;
@@ -693,6 +701,7 @@ export class Game {
         if (moved) {
           e.bodyAngle = moveAngle; // 車体は進行方向
           e.facing = moveAngle; // 砲塔も普段は進行方向（射線が通れば下で自機へ）
+          this.enemyMoving = true; // 走行音：敵が動いている
         }
       }
       // 射線が通っている時だけ砲塔を自機へ向ける（射撃の構え）
@@ -771,7 +780,8 @@ export class Game {
     this.lives--;
     this.spawnDeathFx(this.pos.x, this.pos.y); // 自機が大破する演出
     playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 自機の大破音（戦車大破＝爆発と共用）
-    playSound("miss", { volume: 0.7 }); // 被弾ミス音
+    if (this.lives > 0) playSound("miss", { volume: 0.7 }); // 被弾ミス音（残機が尽きる死＝ゲームオーバーでは鳴らさない）
+    stopBgm(); // 被弾でBGM停止（復活時に頭から再開）
     this.pendingGameOver = this.lives <= 0;
     this.state = "dying"; // 演出 → loop で gameover or respawning へ
     this.interTimer = DEATH_FX;
@@ -843,6 +853,7 @@ export class Game {
   restart(): void {
     this.lives = SOLO_LIVES;
     this.kills = {};
+    startBgm(0.2); // 頭からBGM再生
     this.resetStage();
     this.state = "playing";
   }
@@ -880,7 +891,8 @@ export class Game {
 
   private render(): void {
     const ctx = this.ctx;
-    setLoop("engine", this.state === "playing" && this.wasMoving, 0.3); // 走行音（移動中だけ）
+    // 走行音：自機または敵が1体でも動いていれば鳴らす
+    setLoop("engine", this.state === "playing" && (this.wasMoving || this.enemyMoving), 0.15); // 走行音（控えめ）
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     renderMap(ctx, this.stage);
     this.drawTracks(ctx);

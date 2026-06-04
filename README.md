@@ -41,6 +41,10 @@
 
 ## クレジット
 - 画像素材（タイル・戦車などのスプライト）：**Google Gemini** で生成。
+- BGM：**Google Gemini** で生成。
+- 走行音（`engine`）：**ニコニ・コモンズ** より [nc393143「戦車が走る音・その１・長め」](https://commons.nicovideo.jp/works/nc393143)。
+- 跳弾音（`bounce`）：作者がボイスパーカッションで自作。
+- その他の効果音（`shot` / `mine` / `explosion` / `miss` / `clear` / `gameover`）：[効果音ラボ](https://soundeffect-lab.info/)。
 
 ## 開発ノート（技術的障壁 ↔ 解決策）
 実装を進める中で直面した課題と解決を、ここに随時追記していく。

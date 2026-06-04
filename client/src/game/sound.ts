@@ -2,7 +2,7 @@
 // ファイルが無ければ無音でフォールバック。連続音はスロットルで間引く。
 // スマホの自動再生制約に対応するため、最初のユーザー操作で unlock() を呼ぶこと。
 
-const NAMES = ["shot", "bounce", "mine", "explosion", "miss", "clear", "gameover", "engine"] as const;
+const NAMES = ["shot", "bounce", "mine", "explosion", "miss", "clear", "gameover", "engine", "bgm"] as const;
 export type SoundName = (typeof NAMES)[number];
 
 let ctx: AudioContext | null = null;
@@ -52,6 +52,7 @@ function decodeOne(name: string): void {
     (b) => {
       buffers[name] = b;
       headSilence[name] = detectHeadSilence(b); // 先頭無音を検出して以後自動スキップ
+      if (name === "bgm") tryStartBgm(); // BGMはデコード完了時に（要求があれば）再生開始
     },
     () => {
       /* デコード失敗＝無音 */
@@ -75,6 +76,7 @@ function ensureCtx(): AudioContext | null {
 export function unlockSound(): void {
   const c = ensureCtx();
   if (c && c.state === "suspended") void c.resume();
+  tryStartBgm(); // 解除済みで再生待ちのBGMがあれば開始
 }
 
 export function isMuted(): boolean {
@@ -135,6 +137,39 @@ export function setLoop(name: SoundName, on: boolean, volume = 0.4): void {
     node.on = on;
     applyLoopGain(name);
   }
+}
+
+// BGM：頭出しで再生開始（再生中なら作り直して最初から）。停止はフェードアウト。
+// デコード未完了・未解除でも要求を覚えておき、準備でき次第 tryStartBgm が開始する。
+let bgmWanted = false;
+let bgmVol = 0.2;
+
+function tryStartBgm(): void {
+  if (!bgmWanted || !ctx || !master || !buffers["bgm"]) return;
+  const ex = loops["bgm"];
+  if (ex) {
+    try {
+      ex.src.stop();
+    } catch {
+      /* 既に停止済み */
+    }
+    delete loops["bgm"];
+  }
+  setLoop("bgm", true, bgmVol); // 先頭（先頭無音スキップ位置）から新規再生
+}
+
+export function startBgm(volume = 0.2): void {
+  bgmWanted = true;
+  bgmVol = volume;
+  tryStartBgm();
+}
+
+export function stopBgm(): void {
+  bgmWanted = false;
+  const node = loops["bgm"];
+  if (!node) return;
+  node.on = false;
+  applyLoopGain("bgm"); // フェードアウト（ソースは無音で待機）
 }
 
 // SEを鳴らす。

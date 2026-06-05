@@ -3,21 +3,41 @@
 // URL ?stage=<名前> で単一ステージ、?stage=__sample__ で同梱サンプルを遊べる。
 
 import { sampleStage } from "./game/sampleStage";
+import { campaignStages } from "./game/campaignStages";
 import { Game } from "./game/game";
 import { validateStage } from "./stage/validate";
-import { listSavedStages, loadCampaign, loadSavedStage, stageLoadErrors } from "./game/stageStore";
+import { listSavedStages, loadCampaign, loadSavedStage, saveCampaign, stageLoadErrors } from "./game/stageStore";
 import { isMuted, setMuted, startBgm, toggleMuted, unlockSound } from "./game/sound";
 import type { StageData } from "./stage/types";
 
 const SAMPLE_KEY = "__sample__";
+const LS_PREFIX = "toytank.stage.";
 
 const params = new URLSearchParams(location.search);
 const want = params.get("stage");
 
-// キャンペーン（順番リスト）を解決（有効なステージのみ）。
-const campaign: StageData[] = loadCampaign()
+// ?seedcampaign : 同梱20面を ToyTank Maker 用に localStorage へ書き出す。
+// 既存の保存ステージは全削除（古いマップは消す）→ 20面を保存 → キャンペーン順を設定 → 通常URLへ。
+if (params.has("seedcampaign")) {
+  for (const k of Object.keys(localStorage)) {
+    if (k.startsWith(LS_PREFIX)) localStorage.removeItem(k);
+  }
+  const seeded: string[] = [];
+  for (const s of campaignStages()) {
+    localStorage.setItem(LS_PREFIX + s.name, JSON.stringify(s));
+    seeded.push(s.name);
+  }
+  saveCampaign(seeded);
+  location.replace(location.pathname); // パラメータを外して再読込
+}
+
+// キャンペーン（順番リスト）を解決。
+// localStorage にユーザー作成のキャンペーンがあればそれを優先（エディタ検証用）、
+// 無ければ同梱の20ステージ・キャンペーンを使う。
+const lsCampaign: StageData[] = loadCampaign()
   .map(loadSavedStage)
   .filter((s): s is StageData => s !== null);
+const campaign: StageData[] = lsCampaign.length > 0 ? lsCampaign : campaignStages();
 
 // 再生対象の決定
 let stage: StageData;
@@ -100,10 +120,12 @@ if (modeSel) {
 
 if (campaignMode) {
   game.onStageClear = () => {
+    const clearedCount = idx + 1; // ここまでにクリアした面数（1始まり）
     idx++;
     if (idx < campaign.length) {
+      const healed = clearedCount % 5 === 0 ? game.gainLife() : false; // 5面ごとに残機+1
       game.loadStage(campaign[idx], false); // 残機は引き継ぐ
-      game.beginStage(`ステージ ${idx + 1}`);
+      game.beginStage(`ステージ ${idx + 1}`, healed);
       startBgm(0.2); // 次ステージはBGMを頭から
     }
     // 最後のステージをクリアしたら "CLEAR!" のまま（全クリア）

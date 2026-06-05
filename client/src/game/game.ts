@@ -19,6 +19,7 @@ import {
   BULLET_SPEED,
   DEATH_FX,
   ENEMY_CLOSE,
+  ENEMY_OPENING_DELAY,
   ENEMY_STANDOFF,
   ENEMY_STANDOFF_BREAK,
   ENEMY_MINE_INTERVAL,
@@ -38,6 +39,7 @@ import {
   STAGE_CLEAR_PAUSE,
   BURST_GAP,
   CLOAK_TIME,
+  MAX_LIVES,
   MAX_TRACKS,
   RESPAWN_PAUSE,
   SELF_GRACE,
@@ -143,7 +145,7 @@ function makeEnemies(stage: StageData): Enemy[] {
       type: ty,
       hp: ty.hp,
       age: 0,
-      cd: 0,
+      cd: ENEMY_OPENING_DELAY + Math.random() * 0.8, // 開幕は少し待ってから撃つ（開幕即撃ち防止）
       facing: Math.PI / 2,
       bodyAngle: Math.PI / 2,
       behavior: "combat",
@@ -190,6 +192,7 @@ export class Game {
   private interTimer = 0; // 区切りポーズ／開始画面／大破演出の残り秒
   private pendingGameOver = false; // 大破演出のあとゲームオーバーへ進むか
   private stageLabel = ""; // 「ステージN」表示用
+  private introHealed = false; // 直近の開始画面で「残機+1回復」を表示するか
   private kills: Record<string, number> = {}; // タイプ別の撃破数（リザルト用）
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
   private deathMarks: { x: number; y: number; color: string }[] = []; // 撃破バッテン印
@@ -240,10 +243,19 @@ export class Game {
   }
 
   // ステージ開始の区切り画面を表示する（キャンペーンで各ステージ開始時に呼ぶ）。
-  beginStage(label: string): void {
+  // healed=true なら開始画面に「残機 +1 回復！」を表示する。
+  beginStage(label: string, healed = false): void {
     this.stageLabel = label;
+    this.introHealed = healed;
     this.state = "intro";
     this.interTimer = INTRO_PAUSE;
+  }
+
+  // 残機を1回復（上限 MAX_LIVES）。回復できたら true。
+  gainLife(): boolean {
+    if (this.lives >= MAX_LIVES) return false;
+    this.lives++;
+    return true;
   }
 
   // 操作モード切替（PC=マウスカーソル照準 / スマホ=スティック）。
@@ -986,7 +998,7 @@ export class Game {
       e.ty = e.hy;
       e.hp = e.type.hp; // 生き残った敵のHPも全回復
       e.age = 0; // 透明タイプは再び1秒だけ見える
-      e.cd = 0;
+      e.cd = ENEMY_OPENING_DELAY + Math.random() * 0.8; // 復活直後も少し撃たない猶予
       e.facing = Math.PI / 2;
     }
   }
@@ -1261,6 +1273,13 @@ export class Game {
     ctx.textAlign = "center";
     ctx.font = "26px sans-serif";
     ctx.fillText(`敵戦車 × ${this.enemies.length}`, cx, cy);
+
+    // 5ステージごとの残機回復の告知
+    if (this.introHealed) {
+      ctx.fillStyle = "#7CFC9B";
+      ctx.font = "bold 22px sans-serif";
+      ctx.fillText("残機 +1 回復！", cx, cy + 28);
+    }
 
     // 残機（自機アイコン×数）
     drawTankIcon(ctx, cx - 34, cy + 54, COLORS.p1, 16);

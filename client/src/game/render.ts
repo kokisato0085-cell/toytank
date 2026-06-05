@@ -107,6 +107,8 @@ function drawSpriteAngled(
 
 // 戦車を1体描く。bodyAngle=車体(移動)の向き、turretAngle=砲塔の向き。
 // 画像(tank_body / tank_turret)があれば色で着色して描き、無ければ円＋砲身にフォールバック。
+const TANK_OUTLINE = "#15181e"; // 戦車のふち（暗色）。背景と同化しないよう輪郭を出す
+
 export function drawTank(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -121,6 +123,11 @@ export function drawTank(
   if (body && turret) {
     // 機体を当たり判定径より大きめに描く
     const size = radius * 2 * 1.7;
+    // 視認性アップ：暗いふち（シルエットを一回り大きく後ろに描く）。床と同色の機体（木など）の擬態を防ぐ
+    const ob = tinted("tank_body", TANK_OUTLINE);
+    const ot = tinted("tank_turret", TANK_OUTLINE);
+    if (ob) drawSpriteAngled(ctx, ob, x, y, bodyAngle, size + 7);
+    if (ot) drawSpriteAngled(ctx, ot, x, y, turretAngle, size + 7);
     drawSpriteAngled(ctx, body, x, y, bodyAngle, size);
     drawSpriteAngled(ctx, turret, x, y, turretAngle, size);
     return;

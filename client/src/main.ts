@@ -121,17 +121,32 @@ function updateGameActive(): void {
 window.addEventListener("resize", updateGameActive);
 window.addEventListener("orientationchange", updateGameActive);
 
+const gameSection = document.getElementById("screen-game");
+
+// 没入表示（スマホ）：CSSで画面いっぱい＋キャンバスをビューポート全体にフィット。
+function setImmersive(on: boolean): void {
+  gameSection?.classList.toggle("immersive", on);
+  if (game) {
+    game.immersive = on;
+    game.refit();
+  }
+}
+
 function enterGame(): void {
   showScreen("game");
   unlockSound();
   startBgm(0.2); // ミュート時は内部で無音
-  if (isMobile()) void tryLandscapeFullscreen();
+  if (isMobile()) {
+    setImmersive(true); // まず擬似全画面（iOSでも効く）
+    void tryLandscapeFullscreen(); // Androidは実全画面＋横ロックも追加で試行
+  }
   updateGameActive(); // 横なら再開／縦なら案内＋停止
 }
 
 function backToTitle(): void {
   game?.pause();
   stopBgm();
+  setImmersive(false);
   void exitFullscreen();
   if (rotateHint) rotateHint.style.display = "none";
   showScreen("title");

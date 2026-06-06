@@ -29,14 +29,25 @@
       }
       .muted-note { font-size: 13px; color: #777; }
 
-      /* スマホ横持ち・全画面：黒背景で中央寄せ、説明文は隠してキャンバスを最大化 */
-      #screen-game:fullscreen {
-        background: #000; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; gap: 6px;
+      /* スマホ没入表示：ビューポート全体を黒で覆いキャンバスを最大化。
+         操作ボタンは画面の四隅にオーバーレイ（縦スペースを予約しない）。
+         実全画面API(Android)に頼らずCSSで実現＝iOSでも有効。 */
+      #screen-game.immersive {
+        position: fixed; inset: 0; z-index: 40; margin: 0; background: #000;
+        display: flex; align-items: center; justify-content: center;
       }
-      #screen-game:fullscreen #load-status,
-      #screen-game:fullscreen .instructions { display: none; }
-      #screen-game:fullscreen canvas { border: none; }
+      #screen-game.immersive #load-status,
+      #screen-game.immersive .instructions { display: none; }
+      #screen-game.immersive canvas { border: none; }
+      #screen-game.immersive .gamebar {
+        position: fixed; z-index: 45; margin: 0; padding: 2px;
+        background: rgba(0, 0, 0, 0.35); border-radius: 8px;
+        display: flex; gap: 4px; align-items: center; color: #ddd;
+      }
+      #screen-game.immersive .gamebar.top { top: 4px; left: 4px; }
+      #screen-game.immersive .gamebar.bottom { top: 4px; right: 4px; }
+      #screen-game.immersive .gamebar button,
+      #screen-game.immersive .gamebar select { font-size: 12px; padding: 5px 8px; }
 
       /* 縦持ち回転案内（横ロックできない端末のフォールバック）。全画面内でも前面に出す */
       #rotate-hint {

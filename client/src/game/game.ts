@@ -223,14 +223,22 @@ export class Game {
     this.stage = { ...stage, tiles: this.initialTiles.map((row) => [...row]) };
   }
 
+  // 没入表示（スマホ：CSSで画面いっぱい）か。main.ts が設定する。
+  // 実全画面(Android)に頼らずビューポート全体にフィットさせる（iOSでも有効）。
+  immersive = false;
+  // 外部からの再フィット要求（没入ON/OFF切替時など）。
+  refit(): void {
+    this.fit();
+  }
+
   // 画面に合わせてキャンバスサイズと拡大率を設定（ステージごとにサイズが違ってもよい）。
   // 幅・高さの両方に収める（全画面/スマホ横持ちで見切れないように）。
-  // 全画面時はビューポート全体、通常時は最大760px幅でページ内に収める。
+  // 没入時はビューポート全体（操作ボタンは画面の四隅にオーバーレイ＝縦予約しない）。
   private fit(): void {
     const { w, h } = worldSize(this.stage);
-    const fs = !!document.fullscreenElement;
-    const availW = fs ? window.innerWidth - 8 : Math.min(760, window.innerWidth - 20);
-    const availH = fs ? window.innerHeight - 90 : window.innerHeight - 24; // 全画面は操作バー分を控除
+    const full = this.immersive || !!document.fullscreenElement;
+    const availW = full ? window.innerWidth - 4 : Math.min(760, window.innerWidth - 20);
+    const availH = full ? window.innerHeight - 4 : window.innerHeight - 24;
     this.scale = Math.min(availW / w, availH / h);
     this.canvas.width = Math.round(w * this.scale);
     this.canvas.height = Math.round(h * this.scale);

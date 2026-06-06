@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createEmptyStage, fillBorderSteel } from "../stage/edit";
 import { TILE } from "../stage/types";
-import { blastReaches, computeAimDir, lineClear } from "./ai";
+import { blastReaches, computeAimDir, friendlyBlocksPath, lineClear } from "./ai";
 
 // 7×5・外周鋼。内部床 col1..5 / row1..3、cell=64。row2 中心の y=160。
 function room() {
@@ -56,5 +56,24 @@ describe("computeAimDir", () => {
     const s = room();
     s.tiles[2][3] = TILE.STEEL;
     expect(computeAimDir(s, 100, 160, 380, 160, false)).toBeNull();
+  });
+});
+
+describe("friendlyBlocksPath", () => {
+  // 敵(100,160)→対象(380,160) の直線。途中(240,160)に仲間がいる。
+  it("射線上（手前）に仲間がいれば true", () => {
+    const friends = [{ x: 240, y: 160, r: 24 }];
+    expect(friendlyBlocksPath(room(), 100, 160, 1, 0, 380, 160, 0, 2000, friends)).toBe(true);
+  });
+  it("仲間がいなければ false", () => {
+    expect(friendlyBlocksPath(room(), 100, 160, 1, 0, 380, 160, 0, 2000, [])).toBe(false);
+  });
+  it("仲間が射線から外れていれば false", () => {
+    const friends = [{ x: 240, y: 110, r: 24 }]; // 上に外れる
+    expect(friendlyBlocksPath(room(), 100, 160, 1, 0, 380, 160, 0, 2000, friends)).toBe(false);
+  });
+  it("仲間が対象より奥（手前にいない）なら false", () => {
+    const friends = [{ x: 420, y: 160, r: 24 }]; // 対象(380)より奥
+    expect(friendlyBlocksPath(room(), 100, 160, 1, 0, 380, 160, 0, 2000, friends)).toBe(false);
   });
 });

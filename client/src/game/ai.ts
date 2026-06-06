@@ -125,6 +125,84 @@ function traceClosest(
   return best;
 }
 
+// 発射経路上で、対象(px,py)に届くより手前に「仲間の戦車」がいるか。
+// いれば true（＝撃つと同士討ちになるので発射を見送る）。
+// 直射・バンク両対応：traceClosest と同じ反射物理を軌道シミュレーションでなぞり、
+// プレイヤーに最接近する手前で仲間に当たるか（手前優先）を判定する。
+// friends は自分以外の敵戦車（x,y と当たり半径 r）。
+export function friendlyBlocksPath(
+  stage: StageData,
+  ex: number,
+  ey: number,
+  ux: number,
+  uy: number,
+  px: number,
+  py: number,
+  maxBounce: number,
+  maxDist: number,
+  friends: { x: number; y: number; r: number }[],
+): boolean {
+  if (friends.length === 0) return false;
+  const cell = stage.grid.cell;
+  const step = cell * 0.25;
+  let x = ex;
+  let y = ey;
+  let vx = ux;
+  let vy = uy;
+  let bounces = maxBounce;
+  let traveled = 0;
+  const skip = TANK_RADIUS * 1.5; // 発射直後の自分付近は無視（自分を仲間扱いしない）
+  const guard = Math.ceil(maxDist / step) + 8;
+  for (let s = 0; s < guard && traveled < maxDist; s++) {
+    let nx = x + vx * step;
+    let ny = y + vy * step;
+    // X 軸方向の壁
+    {
+      const col = Math.floor(nx / cell);
+      const row = Math.floor(y / cell);
+      if (isWallCell(stage, col, row)) {
+        if (bounces <= 0) return false; // 壁で消える＝以降は届かない
+        bounces--;
+        vx = -vx;
+        nx = x;
+      }
+    }
+    // Y 軸方向の壁
+    {
+      const col = Math.floor(nx / cell);
+      const row = Math.floor(ny / cell);
+      if (isWallCell(stage, col, row)) {
+        if (bounces <= 0) return false;
+        bounces--;
+        vy = -vy;
+        ny = y;
+      }
+    }
+    if (traveled > skip) {
+      // この区間で先に当たるのは対象か仲間か（最接近距離で手前を判定）
+      const dp = segDist(x, y, nx, ny, px, py);
+      let df = Infinity;
+      let fr = 0;
+      for (const f of friends) {
+        const d = segDist(x, y, nx, ny, f.x, f.y);
+        if (d < df) {
+          df = d;
+          fr = f.r;
+        }
+      }
+      const playerHit = dp <= HIT_TOL;
+      const friendHit = df <= fr + BULLET_RADIUS;
+      if (friendHit && playerHit) return df <= dp; // 同区間なら近い方が先
+      if (friendHit) return true;
+      if (playerHit) return false; // 仲間より先にプレイヤーへ届く
+    }
+    traveled += Math.hypot(nx - x, ny - y);
+    x = nx;
+    y = ny;
+  }
+  return false; // プレイヤーに届く前に仲間に当たらなかった
+}
+
 // 敵(ex,ey)から対象(px,py)を撃つ方向。直射→（allowBank時のみ）バンクショットの順に探す。
 // maxBank: バンクの最大反射回数（弾の bounces 分。黄緑なら2回反射まで）。
 // バンクは実弾の反射物理を軌道シミュレーションでなぞり、外壁・内壁すべての反射を使う。

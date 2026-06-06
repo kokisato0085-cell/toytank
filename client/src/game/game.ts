@@ -8,7 +8,7 @@ import { ENEMY_TYPES, getEnemyType, type EnemyType } from "../stage/enemyTypes";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
 import { circleHitsSolid, isSolidCell, isWallCell, slide } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
-import { blastReaches, computeAimDir, lineClear } from "./ai";
+import { blastReaches, computeAimDir, friendlyBlocksPath, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
 import { playSound, setLoop, startBgm, stopBgm } from "./sound";
 import { Input } from "./input";
@@ -562,6 +562,30 @@ export class Game {
     return TANK_RADIUS * (e.type.scale ?? 1);
   }
 
+  // dir 方向に撃つと、自機へ届く手前で別の敵タンク（味方の敵）に当たるか。
+  // 当たるなら true＝同士討ちになるので発射を見送る。直射・バンク両対応。
+  private allyInLineOfFire(self: Enemy, dir: { x: number; y: number }): boolean {
+    const friends: { x: number; y: number; r: number }[] = [];
+    for (const o of this.enemies) {
+      if (o !== self) friends.push({ x: o.x, y: o.y, r: this.er(o) });
+    }
+    if (friends.length === 0) return false;
+    const { cell, cols, rows } = this.stage.grid;
+    const maxDist = (cols * cell + rows * cell) * (self.type.bounces + 1);
+    return friendlyBlocksPath(
+      this.stage,
+      self.x,
+      self.y,
+      dir.x,
+      dir.y,
+      this.pos.x,
+      this.pos.y,
+      self.type.bounces,
+      maxDist,
+      friends,
+    );
+  }
+
   private addTrack(x: number, y: number, a: number): void {
     this.tracks.push({ x, y, a });
     if (this.tracks.length > MAX_TRACKS) this.tracks.shift();
@@ -884,7 +908,7 @@ export class Game {
       e.cd -= dt;
       if (e.cd <= 0 && e.burstLeft <= 0) {
         const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank, t.bounces);
-        if (dir) {
+        if (dir && !this.allyInLineOfFire(e, dir)) {
           if (t.salvo && t.bullets > 1) {
             // 砲台複数門：扇状に同時発射（同じグループ＝互いに相殺しない）
             this.bulletGroup++;
@@ -914,7 +938,7 @@ export class Game {
         e.burstTimer -= dt;
         if (e.burstTimer <= 0) {
           let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank, t.bounces);
-          if (dir) {
+          if (dir && !this.allyInLineOfFire(e, dir)) {
             if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
             this.bulletGroup++;
             this.spawnBullet(e.x, e.y, dir, 1, t.bulletSpeed, t.bounces, this.er(e));

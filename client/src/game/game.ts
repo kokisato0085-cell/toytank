@@ -201,6 +201,7 @@ export class Game {
   // 進行制御のコールバック（キャンペーン用）。クリア／ゲームオーバー遷移時に1回呼ぶ。
   onStageClear: (() => void) | null = null;
   onGameOver: (() => void) | null = null;
+  onCleared: (() => void) | null = null; // 全クリア（最終リザルト）に入った時
 
   constructor(private canvas: HTMLCanvasElement, private stage: StageData) {
     const ctx = canvas.getContext("2d");
@@ -311,6 +312,13 @@ export class Game {
     this.last = performance.now();
   }
 
+  // 全クリア（最終リザルト）へ遷移。BGM停止＋コールバック通知（リザルトUI表示用）。
+  private enterCleared(): void {
+    this.state = "cleared";
+    stopBgm();
+    this.onCleared?.();
+  }
+
   private loop = (t: number): void => {
     if (this.paused) {
       this.last = t;
@@ -352,8 +360,7 @@ export class Game {
       if (this.interTimer <= 0) {
         this.onStageClear?.(); // キャンペーン：次ステージをロード（intro/playingへ遷移）
         if (this.state === "stageclear") {
-          this.state = "cleared"; // 進む先なし＝全クリア → 最終リザルト
-          stopBgm();
+          this.enterCleared(); // 進む先なし＝全クリア → 最終リザルト
         }
       }
     }
@@ -503,8 +510,7 @@ export class Game {
         this.interTimer = STAGE_CLEAR_PAUSE;
       } else {
         // 単体ステージ：そのまま最終リザルトへ
-        this.state = "cleared";
-        stopBgm();
+        this.enterCleared();
       }
     }
   }

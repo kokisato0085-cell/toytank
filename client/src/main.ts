@@ -61,6 +61,8 @@ function bootGame(stage: StageData): Game {
         startBgm(0.2); // 次ステージはBGMを頭から
       }
     };
+    g.onGameOver = () => showResult(); // 残機ゼロ → リザルト選択
+    g.onCleared = () => showResult(); // 全クリア → リザルト選択
     g.start();
     game = g;
   }
@@ -133,6 +135,8 @@ function setImmersive(on: boolean): void {
 }
 
 function enterGame(): void {
+  hideResult();
+  setGearOpen(false);
   showScreen("game");
   unlockSound();
   startBgm(0.2); // ミュート時は内部で無音
@@ -146,6 +150,8 @@ function enterGame(): void {
 function backToTitle(): void {
   game?.pause();
   stopBgm();
+  hideResult();
+  setGearOpen(false);
   setImmersive(false);
   void exitFullscreen();
   if (rotateHint) rotateHint.style.display = "none";
@@ -269,6 +275,7 @@ muteBtn?.addEventListener("click", () => {
 
 function restart(): void {
   if (!game) return;
+  hideResult();
   if (campaignMode) {
     idx = 0;
     game.loadStage(campaign[0], true); // 残機リセットで最初から
@@ -276,7 +283,50 @@ function restart(): void {
   } else {
     game.restart();
   }
+  updateGameActive(); // 横なら再開
 }
+
+// ---- スマホ没入時：ギアメニュー（音量/リスタート/タイトル）・💣地雷・リザルト選択 ----
+const gearPanel = document.getElementById("gear-panel");
+const gearVol = document.getElementById("gear-volume") as HTMLInputElement | null;
+const gearVolVal = document.getElementById("gear-volume-val");
+const resultOverlay = document.getElementById("result-overlay");
+
+function setGearOpen(open: boolean): void {
+  gearPanel?.classList.toggle("open", open);
+  if (open) {
+    if (gearVol) gearVol.value = String(Math.round(getVolume() * 100));
+    if (gearVolVal) gearVolVal.textContent = `${Math.round(getVolume() * 100)}%`;
+    game?.pause(); // メニュー表示中は停止
+  } else {
+    updateGameActive(); // 閉じたら（横なら）再開
+  }
+}
+function showResult(): void {
+  resultOverlay?.classList.add("open");
+  gameSection?.classList.add("result-open"); // 💣ボタンを隠す（下中央で重なるため）
+}
+function hideResult(): void {
+  resultOverlay?.classList.remove("open");
+  gameSection?.classList.remove("result-open");
+}
+
+document.getElementById("gear-btn")?.addEventListener("click", () => {
+  setGearOpen(!gearPanel?.classList.contains("open"));
+});
+gearVol?.addEventListener("input", () => {
+  setVolume(parseInt(gearVol.value, 10) / 100);
+  unlockSound();
+  if (gearVolVal) gearVolVal.textContent = `${gearVol.value}%`;
+});
+document.getElementById("gear-restart")?.addEventListener("click", () => {
+  setGearOpen(false);
+  restart();
+});
+document.getElementById("gear-title")?.addEventListener("click", () => backToTitle());
+document.getElementById("mobile-mine")?.addEventListener("click", () => game?.layMine());
+document.getElementById("result-restart")?.addEventListener("click", () => restart());
+document.getElementById("result-title")?.addEventListener("click", () => backToTitle());
 document.getElementById("btn-restart")?.addEventListener("click", restart);
 window.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "r" && onGameScreen()) restart();

@@ -1028,7 +1028,7 @@ export class Game {
       e.y = e.hy;
       e.tx = e.hx;
       e.ty = e.hy;
-      e.hp = e.type.hp; // 生き残った敵のHPも全回復
+      if (e.type.key !== "boss") e.hp = e.type.hp; // 生き残った敵のHPは全回復。ただしボスは削った体力を引き継ぐ
       e.age = 0; // 透明タイプは再び1秒だけ見える
       e.cd = ENEMY_OPENING_DELAY + Math.random() * 0.8; // 復活直後も少し撃たない猶予
       e.facing = Math.PI / 2;

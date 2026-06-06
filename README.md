@@ -1,6 +1,9 @@
 # ToyTank
 
-スマホのブラウザ（PWA）で遊べる **2D見下ろし戦車バトル**。
+### ▶ ブラウザでそのままプレイ → **https://kokisato0085-cell.github.io/toytank/**
+（スマホ／PC対応・インストール不要。ステージ作成は [ToyTank Maker](https://kokisato0085-cell.github.io/toytank/editor.html)）
+
+スマホのブラウザで遊べる **2D見下ろし戦車バトル**。
 弾は壁で跳ね返り（跳弾）、地雷を仕掛け、敵戦車を全滅させる。
 ソロ、またはオンライン2人協力（デュオ）で同じステージに挑める。
 

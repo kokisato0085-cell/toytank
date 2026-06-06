@@ -23,7 +23,7 @@ let muted = (() => {
 
 // 各SEのバイト列を先読み（デコードは AudioContext 生成後）。
 for (const name of NAMES) {
-  fetch(`/audio/${name}.mp3`)
+  fetch(`${import.meta.env.BASE_URL}audio/${name}.mp3`) // base(/toytank/等)込みで解決
     .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error("404"))))
     .then((buf) => {
       raw[name] = buf;

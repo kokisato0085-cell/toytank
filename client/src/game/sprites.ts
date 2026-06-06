@@ -16,7 +16,7 @@ for (const name of NAMES) {
   img.onerror = () => {
     ready[name] = false;
   };
-  img.src = `/sprites/${name}.png`;
+  img.src = `${import.meta.env.BASE_URL}sprites/${name}.png`; // base(/toytank/等)込みで解決
   imgs[name] = img;
 }
 

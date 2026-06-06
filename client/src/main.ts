@@ -324,7 +324,11 @@ document.getElementById("gear-restart")?.addEventListener("click", () => {
   restart();
 });
 document.getElementById("gear-title")?.addEventListener("click", () => backToTitle());
-document.getElementById("mobile-mine")?.addEventListener("click", () => game?.layMine());
+// 💣はドラッグ移動中でも反応するよう pointerdown で即時発火（click はマルチタッチ中に抑制されがち）
+document.getElementById("mobile-mine")?.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  game?.layMine();
+});
 document.getElementById("result-restart")?.addEventListener("click", () => restart());
 document.getElementById("result-title")?.addEventListener("click", () => backToTitle());
 document.getElementById("btn-restart")?.addEventListener("click", restart);

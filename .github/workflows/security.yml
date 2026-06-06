@@ -1,0 +1,40 @@
+name: security
+
+# push（main）と Pull Request のたびに、コードの危険チェック（semgrep）と
+# 秘密の漏れチェック（gitleaks）を自動実行する。問題が見つかったら失敗（赤）で止める。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: semgrep（静的解析・コードの危険チェック）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install semgrep
+        run: pip install semgrep
+      # 標準ルールセット（TypeScript/JavaScript/セキュリティ監査）でスキャン。
+      # --error: 指摘が1件でもあれば失敗で止める。
+      - name: Run semgrep
+        run: semgrep scan --config p/typescript --config p/javascript --config p/security-audit --error
+
+  gitleaks:
+    name: gitleaks（シークレット検知・秘密の漏れチェック）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # コミット履歴ぜんぶを対象にするため全履歴を取得
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,15 @@
+# semgrep のスキャン対象から除外するもの（自分のソースだけ見ればよい）
+node_modules/
+dist/
+build/
+
+# 画像・音声などのバイナリ素材
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.webp
+*.mp3
+*.wav
+*.ogg

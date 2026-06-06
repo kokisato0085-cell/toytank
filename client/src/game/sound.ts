@@ -21,6 +21,13 @@ let muted = (() => {
   }
 })();
 
+// 抑制フラグ：true の間はすべての再生を止める（タイトル背景デモを無音にする用）。
+// ミュートと違い保存しない一時的なもの。
+let suppressed = false;
+export function setSuppressed(v: boolean): void {
+  suppressed = v;
+}
+
 // 全体音量（0..1）。クリッピング回避の基準値に掛けて master ゲインへ反映する。
 const VOL_KEY = "toytank.volume";
 const MASTER_BASE = 0.7; // volume=1 のときの master ゲイン
@@ -147,7 +154,7 @@ function applyLoopGain(name: string): void {
 
 // ループ音の ON/OFF を設定する。on=動いている間 true。volume=音量(0..1)。
 export function setLoop(name: SoundName, on: boolean, volume = 0.4): void {
-  if (!ctx || !master) return;
+  if (suppressed || !ctx || !master) return;
   const buf = buffers[name];
   if (!buf) return;
   let node = loops[name];
@@ -191,6 +198,7 @@ function tryStartBgm(): void {
 }
 
 export function startBgm(volume = 0.2): void {
+  if (suppressed) return;
   bgmWanted = true;
   bgmVol = volume;
   tryStartBgm();
@@ -212,7 +220,7 @@ export function playSound(
   name: SoundName,
   opts: { volume?: number; throttleMs?: number; offsetSec?: number; durationSec?: number } = {},
 ): void {
-  if (muted || !ctx || !master) return;
+  if (muted || suppressed || !ctx || !master) return;
   const buf = buffers[name];
   if (!buf) return;
   const now = performance.now();

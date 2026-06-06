@@ -10,6 +10,7 @@ import {
   getVolume,
   isMuted,
   setMuted,
+  setSuppressed,
   setVolume,
   startBgm,
   stopBgm,
@@ -156,10 +157,12 @@ function backToTitle(): void {
   void exitFullscreen();
   if (rotateHint) rotateHint.style.display = "none";
   showScreen("title");
+  demoOn(); // タイトル背景デモを再開
 }
 
 // ---- 各モードの開始 ----
 function startSolo(): void {
+  demoOff(); // デモ停止＋実ゲームの音を有効化（loadStage の startBgm 前に）
   campaign = campaignStages(); // 公式20面（コードが唯一の出所）
   campaignMode = true;
   idx = 0;
@@ -176,6 +179,7 @@ function startCustom(name: string): void {
     alert(`「${name}」を読み込めません`);
     return;
   }
+  demoOff(); // デモ停止＋実ゲームの音を有効化
   campaign = [s];
   campaignMode = false;
   idx = 0;
@@ -232,11 +236,13 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-action]")) {
         break;
       case "custom":
         game?.pause();
+        demoOff();
         buildCustomList();
         showScreen("custom");
         break;
       case "settings":
         game?.pause();
+        demoOff();
         syncSettings();
         showScreen("settings");
         break;
@@ -347,4 +353,43 @@ window.addEventListener("pointerdown", unlock);
 window.addEventListener("keydown", unlock);
 window.addEventListener("touchstart", unlock);
 
+// ---- タイトル背景デモ（戦車AI同士のバトルを自動再生・無音）----
+const demoCanvas = document.getElementById("demo-bg") as HTMLCanvasElement | null;
+let demoGame: Game | null = null;
+let demoIdx = 0;
+const demoStages = campaignStages();
+
+function startDemoStage(i: number): void {
+  if (!demoGame) return;
+  demoIdx = ((i % demoStages.length) + demoStages.length) % demoStages.length;
+  demoGame.loadStage(demoStages[demoIdx], true); // → playing（無音は suppressed で担保）
+}
+function initDemo(): void {
+  if (!demoCanvas) return;
+  setSuppressed(true); // デモは無音（loadStage の startBgm も抑制）
+  const g = new Game(demoCanvas, demoStages[0]);
+  g.demo = true;
+  g.onStageClear = null; // 単発扱い（全滅→cleared→次の面へ）
+  g.onCleared = () => startDemoStage(demoIdx + 1);
+  g.onGameOver = () => startDemoStage(demoIdx + 1);
+  demoGame = g;
+  startDemoStage(0);
+  g.start();
+  g.pause(); // 表示時に resume
+}
+function demoOn(): void {
+  if (!demoGame) return;
+  document.body.classList.add("demo-on");
+  setSuppressed(true);
+  demoGame.refit();
+  demoGame.resume();
+}
+function demoOff(): void {
+  document.body.classList.remove("demo-on");
+  setSuppressed(false);
+  demoGame?.pause();
+}
+
+initDemo();
 showScreen("title"); // 起動時はタイトル
+demoOn();

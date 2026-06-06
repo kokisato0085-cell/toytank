@@ -227,6 +227,14 @@ export class Game {
   // 没入表示（スマホ：CSSで画面いっぱい）か。main.ts が設定する。
   // 実全画面(Android)に頼らずビューポート全体にフィットさせる（iOSでも有効）。
   immersive = false;
+
+  // デモ（アトラクト）モード：自機もAIが操作し、HUD/操作系を描かない。
+  // タイトル背景で戦車同士のバトルを自動再生する用途。
+  demo = false;
+  private demoDest: { x: number; y: number } | null = null;
+  private demoDestTimer = 0;
+  private demoFireCd = 0;
+  private demoMineCd = 3;
   // 外部からの再フィット要求（没入ON/OFF切替時など）。
   refit(): void {
     this.fit();
@@ -281,6 +289,77 @@ export class Game {
   // 操作モード切替（PC=マウスカーソル照準 / スマホ=スティック）。
   setInputMode(mode: "mobile" | "pc"): void {
     this.input.setMode(mode);
+  }
+
+  // ===== デモ（アトラクト）用オートパイロット =====
+  // 自機を「徘徊しつつ最寄りの敵を撃つ」AIで動かす。タイトル背景のバトル演出用。
+  private demoNearestEnemy(): Enemy | null {
+    let best: Enemy | null = null;
+    let bd = Infinity;
+    for (const e of this.enemies) {
+      const d = this.dist(this.pos.x, this.pos.y, e.x, e.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  // ランダムな床マスの中心を返す（徘徊の目的地）。
+  private demoRandomFloor(): { x: number; y: number } {
+    const { cols, rows, cell } = this.stage.grid;
+    for (let i = 0; i < 40; i++) {
+      const c = 1 + Math.floor(Math.random() * (cols - 2));
+      const r = 1 + Math.floor(Math.random() * (rows - 2));
+      if (!isSolidCell(this.stage, c, r)) return { x: (c + 0.5) * cell, y: (r + 0.5) * cell };
+    }
+    return { ...this.pos };
+  }
+
+  // 移動入力（axis相当）：目的地へ向かう。近づく/時間切れ/未設定で目的地を取り直す。
+  private demoAxis(dt: number): { x: number; y: number } {
+    this.demoDestTimer -= dt;
+    const reached = this.demoDest && this.dist(this.pos.x, this.pos.y, this.demoDest.x, this.demoDest.y) < this.stage.grid.cell;
+    if (!this.demoDest || reached || this.demoDestTimer <= 0) {
+      this.demoDest = this.demoRandomFloor();
+      this.demoDestTimer = 1.5 + Math.random() * 2.5;
+    }
+    const dx = this.demoDest.x - this.pos.x;
+    const dy = this.demoDest.y - this.pos.y;
+    const m = Math.hypot(dx, dy) || 1;
+    return { x: dx / m, y: dy / m };
+  }
+
+  // 砲塔の向き（最寄り敵へ）。
+  private demoAimDir(): { x: number; y: number } | null {
+    const e = this.demoNearestEnemy();
+    if (!e) return null;
+    const dx = e.x - this.pos.x;
+    const dy = e.y - this.pos.y;
+    const m = Math.hypot(dx, dy) || 1;
+    return { x: dx / m, y: dy / m };
+  }
+
+  // 射撃・地雷（クールダウン制御）。射線（直射/跳弾）が取れる時だけ撃つ。
+  private demoCombat(dt: number): void {
+    this.demoFireCd -= dt;
+    if (this.demoFireCd <= 0) {
+      const e = this.demoNearestEnemy();
+      const canShoot = this.bullets.filter((b) => b.owner === 0).length < MAX_ACTIVE_BULLETS;
+      const dir = e && canShoot ? computeAimDir(this.stage, this.pos.x, this.pos.y, e.x, e.y, true, MAX_BOUNCES) : null;
+      if (dir) {
+        this.fire(dir);
+        this.demoFireCd = 0.6 + Math.random() * 0.8;
+      } else {
+        this.demoFireCd = 0.25; // 射線が無ければ少し待って再試行
+      }
+    }
+    this.demoMineCd -= dt;
+    if (this.demoMineCd <= 0) {
+      if (Math.random() < 0.3) this.layMine();
+      this.demoMineCd = 4 + Math.random() * 5;
+    }
   }
 
   // 自機の照準方向：PC=マウスカーソルへ / スマホ=エイムパッド。無ければ null。
@@ -386,7 +465,7 @@ export class Game {
     // 同方向の継続/再開は遅延なし。停止から別方向は向きを変える時間(=旋回)が要る。
     // 移動中の方向転換は止まらず曲がる（角ばって曲がる）。
     if (this.fireStun > 0) this.fireStun -= dt; // 発射直後は停止
-    const a = this.input.axis();
+    const a = this.demo ? this.demoAxis(dt) : this.input.axis();
     const mag = Math.hypot(a.x, a.y);
     if (mag > 0.05 && this.fireStun <= 0) {
       const inAng = Math.atan2(a.y, a.x);
@@ -419,16 +498,20 @@ export class Game {
     }
     // 角待ち検知：自機が動かない時間を計測（一定時間でスタンドオフ解除）
     this.playerIdleTime = this.wasMoving ? 0 : this.playerIdleTime + dt;
-    // 照準中は砲塔を照準方向へ（スマホ=エイムパッド / PC=マウスカーソル）
-    const ad = this.playerAimDir();
+    // 照準中は砲塔を照準方向へ（スマホ=エイムパッド / PC=マウスカーソル / デモ=最寄り敵）
+    const ad = this.demo ? this.demoAimDir() : this.playerAimDir();
     if (ad) this.facing = Math.atan2(ad.y, ad.x);
 
     // 発射要求の処理
-    for (const f of this.input.takeFires()) {
-      if (this.bullets.filter((b) => b.owner === 0).length >= MAX_ACTIVE_BULLETS) break;
-      const fallback = { x: Math.cos(this.facing), y: Math.sin(this.facing) };
-      const dir = f.cursor ? (this.playerAimDir() ?? fallback) : (f.dir ?? fallback);
-      this.fire(dir);
+    if (this.demo) {
+      this.demoCombat(dt); // オートパイロットの射撃・地雷
+    } else {
+      for (const f of this.input.takeFires()) {
+        if (this.bullets.filter((b) => b.owner === 0).length >= MAX_ACTIVE_BULLETS) break;
+        const fallback = { x: Math.cos(this.facing), y: Math.sin(this.facing) };
+        const dir = f.cursor ? (this.playerAimDir() ?? fallback) : (f.dir ?? fallback);
+        this.fire(dir);
+      }
     }
 
     // 敵AI（移動＋射撃）
@@ -1153,8 +1236,11 @@ export class Game {
     for (const ex of this.explosions) drawExplosion(ctx, ex.x, ex.y, ex.t / ex.life, ex.maxR, ex.color);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.input.drawSticks(ctx);
-    this.drawHud(ctx);
+    if (!this.demo) {
+      // デモ（タイトル背景）では操作系・HUD・各種ポップアップを描かない
+      this.input.drawSticks(ctx);
+      this.drawHud(ctx);
+    }
   }
 
   // 残機（自機アイコン×数）・敵数・ステージ番号・状態（デバイス座標で重ねる）。

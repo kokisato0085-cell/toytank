@@ -30,7 +30,6 @@ import {
   MAX_ACTIVE_BULLETS,
   MAX_BOUNCES,
   MAX_MINES,
-  MINE_ARM,
   MINE_BLAST_CELLS,
   MINE_BLAST_LIFE,
   MINE_FUSE,
@@ -215,6 +214,8 @@ export class Game {
     this.enemies = makeEnemies(stage);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
+    // tiles は自前のコピーを持つ（壁破壊で渡された元ステージ=キャンペーン配列を汚さない）
+    this.stage = { ...stage, tiles: this.initialTiles.map((row) => [...row]) };
   }
 
   // 画面幅に合わせてキャンバスサイズと拡大率を設定（ステージごとにサイズが違ってもよい）。
@@ -228,10 +229,11 @@ export class Game {
 
   // 別ステージを読み込む（キャンペーンの次ステージ等）。resetLives で残機を初期化するか選ぶ。
   loadStage(stage: StageData, resetLives: boolean): void {
-    this.stage = stage;
     this.spawn = cellCenter(stage, stage.players[0]);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
+    // tiles は自前のコピーを持つ（壁破壊で渡された元ステージ=キャンペーン配列を汚さない）
+    this.stage = { ...stage, tiles: this.initialTiles.map((row) => [...row]) };
     this.fit();
     if (resetLives) {
       this.lives = SOLO_LIVES;
@@ -503,12 +505,10 @@ export class Game {
       // 1) 壊すブロックを「破壊前のタイル」で確定（手前の壁が奥を守る＝貫通させない）
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
-      //    ※設置者は起動猶予(MINE_ARM)の間だけ自分の地雷で無傷。猶予を過ぎたら自爆もあり得る
-      const armed = m.t >= MINE_ARM; // 起動済みなら設置者にも当たる
-      const selfSafe = !armed; // 置いた直後だけ設置者を保護
-      if ((m.owner !== null || !selfSafe) && this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
+      //    爆風内なら設置者本人も巻き込む（置いた直後に弾で起爆して無傷になる“ガード”悪用を防止）
+      if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
       this.enemies = this.enemies.filter((e) => {
-        if ((e !== m.owner || !selfSafe) && this.inBlast(m.x, m.y, e.x, e.y)) {
+        if (this.inBlast(m.x, m.y, e.x, e.y)) {
           e.hp--;
           if (e.hp <= 0) {
             this.markKill(e); // 撃破数＋大破演出＋バッテン印
@@ -523,6 +523,14 @@ export class Game {
           det.add(j);
           queue.push(j);
         }
+      });
+      // 爆風内の弾丸は誘爆させてその場で消す（壁の遮蔽は戦車と同条件で判定）
+      this.bullets = this.bullets.filter((b) => {
+        if (this.inBlast(m.x, m.y, b.x, b.y)) {
+          this.hitFx(b.x, b.y);
+          return false;
+        }
+        return true;
       });
       // 3) 最後にブロックを破壊（↑の判定には影響させない）
       for (const [c, r] of bricks) this.stage.tiles[r][c] = TILE.FLOOR;

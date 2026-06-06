@@ -21,6 +21,18 @@ let muted = (() => {
   }
 })();
 
+// 全体音量（0..1）。クリッピング回避の基準値に掛けて master ゲインへ反映する。
+const VOL_KEY = "toytank.volume";
+const MASTER_BASE = 0.7; // volume=1 のときの master ゲイン
+let volume = (() => {
+  try {
+    const v = parseFloat(localStorage.getItem(VOL_KEY) ?? "");
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+  } catch {
+    return 1;
+  }
+})();
+
 // 各SEのバイト列を先読み（デコードは AudioContext 生成後）。
 for (const name of NAMES) {
   fetch(`${import.meta.env.BASE_URL}audio/${name}.mp3`) // base(/toytank/等)込みで解決
@@ -66,7 +78,7 @@ function ensureCtx(): AudioContext | null {
   if (!AC) return null;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = 0.7;
+  master.gain.value = MASTER_BASE * volume;
   master.connect(ctx.destination);
   for (const name of NAMES) decodeOne(name); // 先読み済みのものをデコード
   return ctx;
@@ -96,6 +108,26 @@ export function setMuted(v: boolean): void {
 export function toggleMuted(): boolean {
   setMuted(!muted);
   return muted;
+}
+
+// 全体音量（0..1）の取得・設定。設定値は localStorage に保存し、master ゲインへ即反映。
+export function getVolume(): number {
+  return volume;
+}
+
+export function setVolume(v: number): void {
+  volume = Math.min(1, Math.max(0, v));
+  try {
+    localStorage.setItem(VOL_KEY, String(volume));
+  } catch {
+    /* 無視 */
+  }
+  if (ctx && master) {
+    const t = ctx.currentTime;
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(master.gain.value, t);
+    master.gain.linearRampToValueAtTime(MASTER_BASE * volume, t + 0.05); // プチノイズ防止に短くフェード
+  }
 }
 
 // ループ再生（走行音など、動いている間ずっと鳴らす用）。

@@ -284,7 +284,22 @@ export class Game {
     requestAnimationFrame(this.loop);
   }
 
+  // タイトル/メニュー表示中は更新を止める（入力の暴発・無駄な計算を防ぐ）。
+  private paused = false;
+  pause(): void {
+    this.paused = true;
+  }
+  resume(): void {
+    this.paused = false;
+    this.last = performance.now();
+  }
+
   private loop = (t: number): void => {
+    if (this.paused) {
+      this.last = t;
+      requestAnimationFrame(this.loop);
+      return;
+    }
     let dt = (t - this.last) / 1000;
     this.last = t;
     if (dt > 0.25) dt = 0.25;

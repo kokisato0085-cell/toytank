@@ -207,6 +207,11 @@ export class Game {
     if (!ctx) throw new Error("2D コンテキストを取得できません");
     this.ctx = ctx;
     this.fit();
+    // 画面サイズ・向き・全画面の変化に追従してキャンバスを再フィット（スマホ横持ち対応）。
+    const refit = (): void => this.fit();
+    window.addEventListener("resize", refit);
+    window.addEventListener("orientationchange", refit);
+    document.addEventListener("fullscreenchange", refit);
     this.input = new Input(canvas);
     this.spawn = cellCenter(stage, stage.players[0]);
     this.pos = { ...this.spawn };
@@ -218,11 +223,15 @@ export class Game {
     this.stage = { ...stage, tiles: this.initialTiles.map((row) => [...row]) };
   }
 
-  // 画面幅に合わせてキャンバスサイズと拡大率を設定（ステージごとにサイズが違ってもよい）。
+  // 画面に合わせてキャンバスサイズと拡大率を設定（ステージごとにサイズが違ってもよい）。
+  // 幅・高さの両方に収める（全画面/スマホ横持ちで見切れないように）。
+  // 全画面時はビューポート全体、通常時は最大760px幅でページ内に収める。
   private fit(): void {
     const { w, h } = worldSize(this.stage);
-    const maxW = Math.min(760, window.innerWidth - 20);
-    this.scale = maxW / w;
+    const fs = !!document.fullscreenElement;
+    const availW = fs ? window.innerWidth - 8 : Math.min(760, window.innerWidth - 20);
+    const availH = fs ? window.innerHeight - 90 : window.innerHeight - 24; // 全画面は操作バー分を控除
+    this.scale = Math.min(availW / w, availH / h);
     this.canvas.width = Math.round(w * this.scale);
     this.canvas.height = Math.round(h * this.scale);
   }

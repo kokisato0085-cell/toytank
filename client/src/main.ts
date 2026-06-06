@@ -67,16 +67,73 @@ function bootGame(stage: StageData): Game {
   return game;
 }
 
+function isMobile(): boolean {
+  return ctrlMode === "mobile";
+}
+function isPortrait(): boolean {
+  return window.matchMedia("(orientation: portrait)").matches;
+}
+
+// スマホでゲーム開始時：横画面・全画面化を試みる（起点はモード選択タップ＝ユーザー操作）。
+// Android Chrome は全画面＋向きロックが効く。iOS Safari は失敗するので回転案内でフォロー。
+// 画面向きロックAPI（実験的でTSの型に無いため最小型でアクセス）。
+type OrientationLockApi = { lock?: (o: string) => Promise<void>; unlock?: () => void };
+function orientationApi(): OrientationLockApi | undefined {
+  return screen.orientation as unknown as OrientationLockApi | undefined;
+}
+
+async function tryLandscapeFullscreen(): Promise<void> {
+  const el = document.getElementById("screen-game");
+  try {
+    await el?.requestFullscreen?.();
+  } catch {
+    /* iOS等は不可：回転案内でフォロー */
+  }
+  try {
+    await orientationApi()?.lock?.("landscape");
+  } catch {
+    /* 向きロック不可（iOS等） */
+  }
+}
+
+async function exitFullscreen(): Promise<void> {
+  try {
+    orientationApi()?.unlock?.();
+  } catch {
+    /* 無視 */
+  }
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+  } catch {
+    /* 無視 */
+  }
+}
+
+const rotateHint = document.getElementById("rotate-hint");
+
+// ゲームの稼働状態を更新：縦持ち（スマホ）なら回転案内を出して一時停止、横なら再開。
+function updateGameActive(): void {
+  const blocked = onGameScreen() && isMobile() && isPortrait();
+  if (rotateHint) rotateHint.style.display = blocked ? "flex" : "none";
+  if (!onGameScreen() || blocked) game?.pause();
+  else game?.resume();
+}
+window.addEventListener("resize", updateGameActive);
+window.addEventListener("orientationchange", updateGameActive);
+
 function enterGame(): void {
   showScreen("game");
-  game?.resume();
   unlockSound();
   startBgm(0.2); // ミュート時は内部で無音
+  if (isMobile()) void tryLandscapeFullscreen();
+  updateGameActive(); // 横なら再開／縦なら案内＋停止
 }
 
 function backToTitle(): void {
   game?.pause();
   stopBgm();
+  void exitFullscreen();
+  if (rotateHint) rotateHint.style.display = "none";
   showScreen("title");
 }
 

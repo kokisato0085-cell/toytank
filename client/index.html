@@ -28,6 +28,23 @@
         border: 1px solid #999; border-radius: 8px; background: #f7f7f7; cursor: pointer;
       }
       .muted-note { font-size: 13px; color: #777; }
+
+      /* スマホ横持ち・全画面：黒背景で中央寄せ、説明文は隠してキャンバスを最大化 */
+      #screen-game:fullscreen {
+        background: #000; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 6px;
+      }
+      #screen-game:fullscreen #load-status,
+      #screen-game:fullscreen .instructions { display: none; }
+      #screen-game:fullscreen canvas { border: none; }
+
+      /* 縦持ち回転案内（横ロックできない端末のフォールバック）。全画面内でも前面に出す */
+      #rotate-hint {
+        display: none; position: fixed; inset: 0; z-index: 50;
+        background: #111; color: #fff; flex-direction: column;
+        align-items: center; justify-content: center; text-align: center;
+        font-size: 22px; line-height: 1.8;
+      }
     </style>
   </head>
   <body>
@@ -70,7 +87,7 @@
 
     <!-- ===== ゲーム ===== -->
     <section id="screen-game" class="screen">
-      <div class="gamebar">
+      <div class="gamebar top">
         <button class="back" data-action="title">← タイトル</button>
         操作:
         <select id="ctrl-mode">
@@ -80,15 +97,17 @@
       </div>
       <p id="load-status" style="font-size: 13px; color: #555; min-height: 16px; margin: 2px 0;"></p>
       <canvas id="game" style="border: 1px solid #999; touch-action: none;"></canvas>
-      <div class="gamebar">
+      <div class="gamebar bottom">
         <button id="btn-mine">💣 地雷を置く</button>
         <button id="btn-restart">↻ リスタート (R)</button>
         <button id="btn-mute">🔊 音 ON</button>
       </div>
-      <p style="font-size: 12px; color: #777;">
+      <p class="instructions" style="font-size: 12px; color: #777;">
         左半分ドラッグ＝移動 / 右半分ドラッグ→離す＝照準発射 / 右半分タップ＝即撃ち / 💣＝地雷
         （PC：WASD・矢印＝移動、マウス右半ドラッグ＝照準、Space＝即撃ち、E＝地雷）
       </p>
+      <!-- スマホ縦持ち時の回転案内（横ロックできない端末＝iOS等のフォールバック）-->
+      <div id="rotate-hint">📱<br />端末を <b>横向き</b> にしてください</div>
     </section>
 
     <script type="module" src="/src/main.ts"></script>

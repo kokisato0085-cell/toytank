@@ -1297,21 +1297,40 @@ export class Game {
     }
   }
 
-  // 残機（自機アイコン×数）・敵数・ステージ番号・状態（デバイス座標で重ねる）。
+  // 白文字＋暗い縁取りで、明るい床・暗い黒帯どちらでも視認できるHUDテキスト。
+  private hudText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number): void {
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0,0,0,0.75)";
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(text, x, y);
+  }
+
+  // 残機（自機アイコン×数）・敵数・ステージ番号・状態。
+  // 没入時はアリーナの角に寄せ（黒帯に乗らない）、右上はギアと重なるので情報は左側にまとめる。
   private drawHud(ctx: CanvasRenderingContext2D): void {
-    const iy = 22;
-    drawTankIcon(ctx, 20, iy, COLORS.p1);
-    ctx.fillStyle = "#222";
-    ctx.textAlign = "left";
+    const ox = this.immersive ? this.offsetX : 0;
+    const oy = this.immersive ? this.offsetY : 0;
+    const left = ox;
+    const iy = 22 + oy;
     ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    drawTankIcon(ctx, left + 20, iy, COLORS.p1);
     ctx.font = "bold 18px sans-serif";
-    ctx.fillText(`× ${this.lives}`, 38, iy);
-    ctx.font = "14px sans-serif";
-    ctx.fillText(`敵 ${this.enemies.length}`, 92, iy);
+    this.hudText(ctx, `× ${this.lives}`, left + 38, iy);
+    ctx.font = "bold 14px sans-serif";
+    this.hudText(ctx, `敵 ${this.enemies.length}`, left + 92, iy);
     if (this.stageLabel) {
-      ctx.textAlign = "right";
-      ctx.font = "bold 16px sans-serif";
-      ctx.fillText(this.stageLabel, this.lw() - 10, iy);
+      if (this.immersive) {
+        // 没入：右上はギアがあるので、敵数の右隣（左寄せ）に置く
+        ctx.font = "bold 14px sans-serif";
+        this.hudText(ctx, this.stageLabel, left + 150, iy);
+      } else {
+        ctx.textAlign = "right";
+        ctx.font = "bold 16px sans-serif";
+        this.hudText(ctx, this.stageLabel, this.lw() - 10, iy);
+      }
     }
 
     this.drawBossBar(ctx); // ボスがいれば体力バー

@@ -53,9 +53,11 @@
       .badge { font-size: 11px; color: #fff; background: #c0392b; border-radius: 10px; padding: 2px 8px; }
       .badge.soon { background: #5a6b7d; }
 
-      .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button {
+      .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button, #set-fullscreen {
         background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
       }
+      #set-fullscreen { font-size: 15px; padding: 9px 16px; }
+      #set-fullscreen:hover { background: var(--panel2); }
       .back:hover, .gamebar button:hover, #pc-panel button:hover, #custom-list button:hover { background: var(--panel2); }
       .back { font-size: 14px; padding: 8px 14px; margin-bottom: 10px; }
       .row { margin: 12px 0; font-size: 14px; }
@@ -89,6 +91,18 @@
       .controls-legend .lbl b { color: var(--accent); font-size: 14px; }
       .controls-legend .lbl small { color: var(--muted); font-size: 12px; margin-top: 2px; }
       #screen-game.immersive .controls-legend { display: none; }
+
+      /* フルスクリーン（⛶ボタン）：ページ全体を全画面化。ゲーム中はキャンバスを中央＋最大化 */
+      :fullscreen body { padding: 0; }
+      :fullscreen #screen-game.active:not(.immersive) { min-height: 100vh; justify-content: center; background: #000; }
+      :fullscreen #screen-game #load-status,
+      :fullscreen #screen-game .controls-legend { display: none; }
+      :fullscreen #screen-game canvas { border: none; }
+      :fullscreen #screen-game .gamebar.top {
+        position: fixed; top: 6px; left: 6px; z-index: 45;
+        background: rgba(0, 0, 0, 0.45); border-radius: 8px; padding: 3px 6px; margin: 0;
+      }
+      :fullscreen #screen-game #pc-panel.open { position: fixed; top: 52px; left: 6px; z-index: 45; }
 
       /* スマホ没入表示：ビューポート全体を黒で覆いキャンバスを最大化。
          操作ボタンは画面の四隅にオーバーレイ（縦スペースを予約しない）。
@@ -189,6 +203,9 @@
       <div class="row">
         <label><input id="set-mute" type="checkbox" /> ミュート（消音）</label>
       </div>
+      <div class="row">
+        <button id="set-fullscreen">⛶ フルスクリーン</button>
+      </div>
       <p class="muted-note">※ 操作方法のカスタマイズは今後追加予定です。</p>
     </section>
 
@@ -218,6 +235,7 @@
         </div>
         <button id="btn-mute">🔊 音 ON</button>
         <button id="btn-mine">💣 地雷を置く</button>
+        <button id="btn-fullscreen">⛶ フルスクリーン</button>
       </div>
       <p id="load-status" style="font-size: 13px; color: #9db0c2; min-height: 16px; margin: 2px 0;"></p>
       <canvas id="game" style="touch-action: none;"></canvas>

@@ -276,6 +276,26 @@ pcVol?.addEventListener("input", () => {
   if (pcVolVal) pcVolVal.textContent = `${pcVol.value}%`;
 });
 
+// フルスクリーン切替（⛶）。ページ全体を全画面化。タイトル設定とゲーム中⚙設定の両方から呼べる。
+// Game の fit は fullscreenElement を見てキャンバスを拡大する。
+async function toggleFullscreen(): Promise<void> {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen?.();
+  } catch {
+    /* 非対応環境は無視 */
+  }
+}
+document.getElementById("btn-fullscreen")?.addEventListener("click", () => void toggleFullscreen());
+document.getElementById("set-fullscreen")?.addEventListener("click", () => void toggleFullscreen());
+document.addEventListener("fullscreenchange", () => {
+  const label = document.fullscreenElement ? "⛶ 全画面を解除" : "⛶ フルスクリーン";
+  const a = document.getElementById("btn-fullscreen");
+  const b = document.getElementById("set-fullscreen");
+  if (a) a.textContent = label;
+  if (b) b.textContent = label;
+});
+
 // ---- ゲーム画面のボタン ----
 document.getElementById("btn-mine")?.addEventListener("click", () => game?.layMine());
 

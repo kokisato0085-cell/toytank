@@ -169,8 +169,9 @@ function makeEnemies(stage: StageData): Enemy[] {
 export class Game {
   private ctx: CanvasRenderingContext2D;
   private scale = 1;
-  private offsetX = 0; // ワールド描画のオフセット（没入時は黒帯ぶん中央へ寄せる）
+  private offsetX = 0; // ワールド描画のオフセット（没入時は黒帯ぶん中央へ寄せる・論理px）
   private offsetY = 0;
+  private dpr = 1; // devicePixelRatio（内部解像度＝論理サイズ×dpr で高精細化）
   private input: Input;
   private spawn: { x: number; y: number };
   private pos: { x: number; y: number };
@@ -247,28 +248,52 @@ export class Game {
   // 画面に合わせてキャンバスサイズと拡大率を設定（ステージごとにサイズが違ってもよい）。
   // 幅・高さの両方に収める（全画面/スマホ横持ちで見切れないように）。
   // 没入時はビューポート全体（操作ボタンは画面の四隅にオーバーレイ＝縦予約しない）。
+  // 論理(CSS)サイズ。描画コードはこの座標系で行い、内部解像度は dpr 倍にして高精細化する。
+  private lw(): number {
+    return this.canvas.width / this.dpr;
+  }
+  private lh(): number {
+    return this.canvas.height / this.dpr;
+  }
+
   private fit(): void {
     const { w, h } = worldSize(this.stage);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3); // 上限3で巨大化防止
+    this.dpr = dpr;
+    let logicalW: number;
+    let logicalH: number;
     if (this.immersive) {
-      // 没入（スマホ）：キャンバスを画面いっぱいにし、アリーナは中央に黒帯込みで描く。
+      // 没入（スマホ）：表示は画面いっぱい。アリーナは中央に黒帯込みで描く。
       // → 黒帯部分もキャンバス内なので、そこにタッチしてパッドを置ける。
-      const cw = Math.floor(window.innerWidth);
-      const ch = Math.floor(window.innerHeight);
-      this.canvas.width = cw;
-      this.canvas.height = ch;
-      this.scale = Math.min((cw - 4) / w, (ch - 4) / h);
-      this.offsetX = (cw - w * this.scale) / 2;
-      this.offsetY = (ch - h * this.scale) / 2;
+      logicalW = Math.floor(window.innerWidth);
+      logicalH = Math.floor(window.innerHeight);
+      this.scale = Math.min((logicalW - 4) / w, (logicalH - 4) / h);
+      this.offsetX = (logicalW - w * this.scale) / 2;
+      this.offsetY = (logicalH - h * this.scale) / 2;
     } else {
-      // 通常(PC)/全画面：キャンバス＝アリーナサイズ（CSSで中央寄せ・レターボックス）。
+      // 通常(PC)/全画面：表示＝アリーナサイズ（CSSで中央寄せ・レターボックス）。
       const full = !!document.fullscreenElement;
       const availW = full ? window.innerWidth - 4 : Math.min(1100, window.innerWidth - 20);
       const availH = full ? window.innerHeight - 4 : window.innerHeight - 120;
       this.scale = Math.min(availW / w, availH / h);
-      this.canvas.width = Math.round(w * this.scale);
-      this.canvas.height = Math.round(h * this.scale);
+      logicalW = Math.round(w * this.scale);
+      logicalH = Math.round(h * this.scale);
       this.offsetX = 0;
       this.offsetY = 0;
+    }
+    // 内部解像度を物理ピクセルへ合わせて高精細化。
+    this.canvas.width = Math.round(logicalW * dpr);
+    this.canvas.height = Math.round(logicalH * dpr);
+    // 表示サイズは論理サイズに固定（通常のゲーム画面）。
+    // デモ背景(#demo-bg)は CSS の object-fit:contain / 100vw で引き伸ばすので、
+    // インラインstyleを設定するとそれを上書きしてしまうため設定しない。
+    if (this.demo) {
+      // デモは CSS(object-fit/100vw)で表示するので、構築時に付いたインラインstyleを消す
+      this.canvas.style.width = "";
+      this.canvas.style.height = "";
+    } else {
+      this.canvas.style.width = `${logicalW}px`;
+      this.canvas.style.height = `${logicalH}px`;
     }
   }
 
@@ -1242,7 +1267,9 @@ export class Game {
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
-    ctx.setTransform(this.scale, 0, 0, this.scale, this.offsetX, this.offsetY);
+    // ワールドは scale×dpr＋オフセット×dpr で内部解像度いっぱいに描く（高精細）
+    const s = this.scale * this.dpr;
+    ctx.setTransform(s, 0, 0, s, this.offsetX * this.dpr, this.offsetY * this.dpr);
     renderMap(ctx, this.stage);
     this.drawTracks(ctx);
     for (const dm of this.deathMarks) drawCross(ctx, dm.x, dm.y, dm.color);
@@ -1261,7 +1288,8 @@ export class Game {
     }
     for (const ex of this.explosions) drawExplosion(ctx, ex.x, ex.y, ex.t / ex.life, ex.maxR, ex.color);
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // HUD/操作系は論理px座標（×dpr）で描く＝高精細かつUIサイズは一定
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     if (!this.demo) {
       // デモ（タイトル背景）では操作系・HUD・各種ポップアップを描かない
       this.input.drawSticks(ctx);
@@ -1283,7 +1311,7 @@ export class Game {
     if (this.stageLabel) {
       ctx.textAlign = "right";
       ctx.font = "bold 16px sans-serif";
-      ctx.fillText(this.stageLabel, ctx.canvas.width - 10, iy);
+      ctx.fillText(this.stageLabel, this.lw() - 10, iy);
     }
 
     this.drawBossBar(ctx); // ボスがいれば体力バー
@@ -1311,9 +1339,9 @@ export class Game {
 
   // ステージクリアのポップアップ（背景のステージは残したまま中央にパネル）。
   private drawStageClear(ctx: CanvasRenderingContext2D): void {
-    const cx = ctx.canvas.width / 2;
-    const cy = ctx.canvas.height / 2;
-    const pw = Math.min(360, ctx.canvas.width * 0.8);
+    const cx = this.lw() / 2;
+    const cy = this.lh() / 2;
+    const pw = Math.min(360, this.lw() * 0.8);
     const ph = this.clearHealed ? 172 : 130; // +1回復の行ぶん広げる
     // パネル（半透明・角丸風）
     ctx.fillStyle = "rgba(0,0,0,0.72)";
@@ -1347,7 +1375,7 @@ export class Game {
     if (this.state !== "playing" && this.state !== "dying") return; // 戦闘中のみ表示
     const bosses = this.enemies.filter((e) => e.type.key === "boss");
     if (bosses.length === 0) return;
-    const cw = ctx.canvas.width;
+    const cw = this.lw();
     const bw = Math.min(420, cw * 0.7); // バー幅
     const bh = 16;
     const x = (cw - bw) / 2;
@@ -1377,10 +1405,10 @@ export class Game {
 
   // クリア／ゲームオーバー時のリザルト：色別の戦車アイコン×撃破数。
   private drawResult(ctx: CanvasRenderingContext2D, title: string, titleColor: string): void {
-    const cx = ctx.canvas.width / 2;
-    const cy = ctx.canvas.height / 2;
+    const cx = this.lw() / 2;
+    const cy = this.lh() / 2;
     ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillRect(0, 0, this.lw(), this.lh());
 
     ctx.fillStyle = titleColor;
     ctx.font = "bold 40px sans-serif";
@@ -1400,7 +1428,7 @@ export class Game {
     const rowYs = twoRows ? [cy - 2, cy + 40] : [cy + 10];
     rows.forEach((row, ri) => {
       if (row.length === 0) return;
-      const ew = Math.min(150, (ctx.canvas.width * 0.92) / row.length);
+      const ew = Math.min(150, (this.lw() * 0.92) / row.length);
       const iconR = Math.max(10, Math.min(16, ew * 0.12));
       const y = rowYs[ri];
       let x = cx - (row.length * ew) / 2 + ew / 2;
@@ -1422,10 +1450,10 @@ export class Game {
 
   // 被弾の区切り画面：「ミス！」＋ 残機（自機アイコン×数）。
   private drawMiss(ctx: CanvasRenderingContext2D): void {
-    const cx = ctx.canvas.width / 2;
-    const cy = ctx.canvas.height / 2;
+    const cx = this.lw() / 2;
+    const cy = this.lh() / 2;
     ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(0, cy - 56, ctx.canvas.width, 112);
+    ctx.fillRect(0, cy - 56, this.lw(), 112);
 
     ctx.fillStyle = "#ffd23a";
     ctx.font = "bold 34px sans-serif";
@@ -1447,10 +1475,10 @@ export class Game {
 
   // ステージ開始の区切り画面：ステージ名・出現する敵（色×数）・残機。
   private drawIntro(ctx: CanvasRenderingContext2D): void {
-    const cx = ctx.canvas.width / 2;
-    const cy = ctx.canvas.height / 2;
+    const cx = this.lw() / 2;
+    const cy = this.lh() / 2;
     ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillRect(0, 0, this.lw(), this.lh());
 
     ctx.fillStyle = "#fff";
     ctx.textAlign = "center";

@@ -60,11 +60,12 @@ export class Input {
     canvas.addEventListener("pointercancel", this.onUp);
   }
 
+  // 論理(CSS)px へ変換。canvas.width は内部解像度(×dpr)なので clientWidth(表示サイズ)で割る。
   private toCanvas(e: PointerEvent): { x: number; y: number } {
     const r = this.canvas.getBoundingClientRect();
     return {
-      x: (e.clientX - r.left) * (this.canvas.width / r.width),
-      y: (e.clientY - r.top) * (this.canvas.height / r.height),
+      x: (e.clientX - r.left) * (this.canvas.clientWidth / r.width),
+      y: (e.clientY - r.top) * (this.canvas.clientHeight / r.height),
     };
   }
 
@@ -76,7 +77,7 @@ export class Input {
       return;
     }
     const p = this.toCanvas(e);
-    const leftHalf = p.x < this.canvas.width / 2;
+    const leftHalf = p.x < this.canvas.clientWidth / 2; // 論理px基準で左右判定
     const target = leftHalf ? this.move : this.aim;
     if (target.active) return; // その側は使用中
     target.id = e.pointerId;

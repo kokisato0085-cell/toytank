@@ -192,6 +192,8 @@ export class Game {
   private pendingGameOver = false; // 大破演出のあとゲームオーバーへ進むか
   private stageLabel = ""; // 「ステージN」表示用
   private introHealed = false; // 直近の開始画面で「残機+1回復」を表示するか
+  clearGrantsLife = false; // このステージをクリアすると残機+1か（main.tsが面ごとに設定）
+  private clearHealed = false; // クリア画面で「残機+1回復」を表示するか
   private kills: Record<string, number> = {}; // タイプ別の撃破数（リザルト用）
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
   private deathMarks: { x: number; y: number; color: string }[] = []; // 撃破バッテン印
@@ -592,6 +594,7 @@ export class Game {
         // キャンペーン：ステージ背景を残したままクリアポップアップ → 待機後に次へ（loopで処理）
         this.state = "stageclear";
         this.interTimer = STAGE_CLEAR_PAUSE;
+        this.clearHealed = this.clearGrantsLife && this.gainLife(); // 5/10/15クリアで即+1（上限なら不可）
       } else {
         // 単体ステージ：そのまま最終リザルトへ
         this.enterCleared();
@@ -1289,7 +1292,7 @@ export class Game {
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
     const pw = Math.min(360, ctx.canvas.width * 0.8);
-    const ph = 130;
+    const ph = this.clearHealed ? 172 : 130; // +1回復の行ぶん広げる
     // パネル（半透明・角丸風）
     ctx.fillStyle = "rgba(0,0,0,0.72)";
     ctx.fillRect(cx - pw / 2, cy - ph / 2, pw, ph);
@@ -1299,14 +1302,22 @@ export class Game {
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    const titleY = this.clearHealed ? cy - 44 : cy - 28;
+    const killsY = this.clearHealed ? cy : cy + 18;
     ctx.fillStyle = "#7CFC9B";
     ctx.font = "bold 30px sans-serif";
-    ctx.fillText("ステージクリア！", cx, cy - 28);
+    ctx.fillText("ステージクリア！", cx, titleY);
 
     const totalKills = Object.values(this.kills).reduce((a, b) => a + b, 0);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 22px sans-serif";
-    ctx.fillText(`総撃破数  ${totalKills}`, cx, cy + 18);
+    ctx.fillText(`総撃破数  ${totalKills}`, cx, killsY);
+
+    if (this.clearHealed) {
+      ctx.fillStyle = "#f0a93b";
+      ctx.font = "bold 22px sans-serif";
+      ctx.fillText("残機 +1 回復！", cx, cy + 40);
+    }
   }
 
   // ボスの体力バー（画面上部・中央）。ボスが複数いれば縦に並べる。

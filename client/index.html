@@ -5,51 +5,90 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>ToyTank</title>
     <style>
-      body { margin: 12px; font-family: sans-serif; }
-      h1 { font-size: 20px; }
+      /* ===== 共通テーマ（ダーク・統一感）===== */
+      :root {
+        --bg: #0e141c; --panel: #1b2633; --panel2: #223040; --line: #2e3e50;
+        --text: #e8edf3; --muted: #9db0c2; --accent: #f0a93b; --accentText: #1a1206;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 14px; min-height: 100vh; color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(120% 90% at 50% -10%, #1b2a3d 0%, #0e141c 55%);
+      }
+      h1 { font-size: 22px; margin: 0 0 8px; }
       .screen { display: none; }
       .screen.active { display: block; }
-      /* PC（非没入）のゲーム画面は中央寄せ（右側の空白の違和感を解消）*/
       #screen-game.active:not(.immersive) { display: flex; flex-direction: column; align-items: center; }
 
-      /* タイトル背景のデモ（戦車AIバトル）。cover表示＋暗幕でメニューを読みやすく */
+      /* タイトル背景のデモ（戦車AIバトル）。contain表示＋暗幕でメニューを読みやすく */
       #demo-bg {
         display: none; position: fixed; inset: 0; width: 100vw; height: 100vh;
         object-fit: contain; z-index: 0; pointer-events: none; background: #000;
       }
       #demo-scrim {
         display: none; position: fixed; inset: 0; z-index: 1; pointer-events: none;
-        background: rgba(0, 0, 0, 0.5);
+        background: linear-gradient(180deg, rgba(8, 12, 18, 0.5), rgba(8, 12, 18, 0.72));
       }
       body.demo-on #demo-bg, body.demo-on #demo-scrim { display: block; }
-      #screen-title { position: relative; z-index: 2; } /* デモ・暗幕より前面 */
-      body.demo-on #screen-title h1 { color: #fff; text-shadow: 0 2px 6px #000; }
-      .menu { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin-top: 16px; }
-      .menu button, .menu a.btn {
-        font-size: 17px; padding: 14px 16px; text-align: left; text-decoration: none; color: #222;
-        border: 1px solid #999; border-radius: 8px; background: #f7f7f7; cursor: pointer;
-        display: flex; justify-content: space-between; align-items: center;
+
+      /* タイトル画面：大きいロゴ＋中央寄せメニュー */
+      #screen-title { position: relative; z-index: 2; text-align: center; padding-top: 3vh; }
+      #screen-title h1 {
+        font-size: clamp(48px, 11vw, 96px); font-weight: 900; letter-spacing: 3px; margin: 0;
+        color: #fff; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35), 0 0 26px rgba(240, 169, 59, 0.35);
       }
-      .menu button:disabled { color: #aaa; background: #eee; cursor: not-allowed; }
+      #screen-title h1 .accent { color: var(--accent); }
+      .tagline { color: var(--muted); margin: 6px 0 0; font-size: 15px; letter-spacing: 1px; }
+      .menu { display: flex; flex-direction: column; gap: 11px; max-width: 380px; margin: 24px auto 0; }
+      .menu button, .menu a.btn {
+        font-size: 17px; padding: 15px 18px; text-align: left; text-decoration: none; cursor: pointer;
+        color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+        display: flex; justify-content: space-between; align-items: center; transition: background 0.15s, transform 0.05s;
+      }
+      .menu button:hover, .menu a.btn:hover { background: var(--panel2); }
+      .menu button:active, .menu a.btn:active { transform: translateY(1px); }
+      .menu button[data-action="solo"] { background: var(--accent); color: var(--accentText); border-color: var(--accent); font-weight: 700; }
+      .menu button:disabled { color: var(--muted); background: #141c26; cursor: not-allowed; }
       .badge { font-size: 11px; color: #fff; background: #c0392b; border-radius: 10px; padding: 2px 8px; }
-      .badge.soon { background: #888; }
-      .back { font-size: 14px; padding: 8px 14px; margin-bottom: 10px; cursor: pointer; }
+      .badge.soon { background: #5a6b7d; }
+
+      .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button {
+        background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+      }
+      .back:hover, .gamebar button:hover, #pc-panel button:hover, #custom-list button:hover { background: var(--panel2); }
+      .back { font-size: 14px; padding: 8px 14px; margin-bottom: 10px; }
       .row { margin: 12px 0; font-size: 14px; }
       .gamebar { margin: 6px 0; font-size: 13px; display: flex; gap: 8px; align-items: center; }
-      .gamebar button, .gamebar select { font-size: 15px; padding: 6px 12px; }
+      .gamebar button, .gamebar select { font-size: 15px; padding: 7px 14px; }
+
       /* PC用 設定タブ（💣地雷・🔊音・音量）。⚙設定で開閉 */
-      #pc-panel { display: none; gap: 10px; align-items: center; flex-wrap: wrap;
-        margin: 6px 0; padding: 10px; border: 1px solid #ccc; border-radius: 8px; background: #fafafa; }
+      #pc-panel { display: none; gap: 12px; align-items: center; flex-wrap: wrap;
+        margin: 6px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
       #pc-panel.open { display: flex; }
       #pc-panel .gp-row { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-      #pc-panel button { font-size: 15px; padding: 6px 12px; }
+      #pc-panel button { font-size: 15px; padding: 7px 14px; background: var(--panel2); }
       #screen-game.immersive #pc-panel { display: none; } /* 没入時はPCタブを隠す */
-      #custom-list { display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
-      #custom-list button {
-        font-size: 16px; padding: 12px 16px; text-align: left;
-        border: 1px solid #999; border-radius: 8px; background: #f7f7f7; cursor: pointer;
+
+      #custom-list { display: flex; flex-direction: column; gap: 8px; max-width: 380px; }
+      #custom-list button { font-size: 16px; padding: 13px 16px; text-align: left; }
+      .muted-note { font-size: 13px; color: var(--muted); }
+
+      /* PC：キャンバスの枠＋周囲のアイコン操作ガイド（殺風景の解消）*/
+      #screen-game:not(.immersive) canvas {
+        border: 2px solid var(--line); border-radius: 10px; background: #000;
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
       }
-      .muted-note { font-size: 13px; color: #777; }
+      .controls-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 820px; margin: 14px auto 0; }
+      .controls-legend .ctrl {
+        display: flex; align-items: center; gap: 12px; min-width: 190px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+      }
+      .controls-legend .ic { font-size: 24px; line-height: 1; }
+      .controls-legend .lbl { display: flex; flex-direction: column; }
+      .controls-legend .lbl b { color: var(--accent); font-size: 14px; }
+      .controls-legend .lbl small { color: var(--muted); font-size: 12px; margin-top: 2px; }
+      #screen-game.immersive .controls-legend { display: none; }
 
       /* スマホ没入表示：ビューポート全体を黒で覆いキャンバスを最大化。
          操作ボタンは画面の四隅にオーバーレイ（縦スペースを予約しない）。
@@ -127,7 +166,8 @@
 
     <!-- ===== タイトル（モード選択）===== -->
     <section id="screen-title" class="screen active">
-      <h1>ToyTank</h1>
+      <h1>Toy<span class="accent">Tank</span></h1>
+      <p class="tagline">2D 戦車バトル — 跳弾と地雷で敵を全滅させろ</p>
       <div class="menu">
         <button data-action="solo">ソロ（キャンペーン20面）</button>
         <button disabled>Co-op マルチ <span class="badge soon">Coming Soon</span></button>
@@ -179,12 +219,15 @@
         <button id="btn-mute">🔊 音 ON</button>
         <button id="btn-mine">💣 地雷を置く</button>
       </div>
-      <p id="load-status" style="font-size: 13px; color: #555; min-height: 16px; margin: 2px 0;"></p>
-      <canvas id="game" style="border: 1px solid #999; touch-action: none;"></canvas>
-      <p class="instructions" style="font-size: 12px; color: #777;">
-        左半分ドラッグ＝移動 / 右半分ドラッグ→離す＝照準発射 / 右半分タップ＝即撃ち / 💣＝地雷
-        （PC：WASD・矢印＝移動、マウス右半ドラッグ＝照準、Space＝即撃ち、E＝地雷）
-      </p>
+      <p id="load-status" style="font-size: 13px; color: #9db0c2; min-height: 16px; margin: 2px 0;"></p>
+      <canvas id="game" style="touch-action: none;"></canvas>
+      <!-- PC操作ガイド（アイコン付き）。将来チュートリアル化で差し替え予定 -->
+      <div class="controls-legend instructions">
+        <div class="ctrl"><span class="ic">🕹️</span><span class="lbl"><b>移動</b><small>WASD / 矢印キー</small></span></div>
+        <div class="ctrl"><span class="ic">🎯</span><span class="lbl"><b>照準</b><small>マウスを動かす</small></span></div>
+        <div class="ctrl"><span class="ic">💥</span><span class="lbl"><b>発射</b><small>クリック（狙い）/ Space（正面）</small></span></div>
+        <div class="ctrl"><span class="ic">💣</span><span class="lbl"><b>地雷</b><small>E キー</small></span></div>
+      </div>
       <!-- スマホ没入時の操作（ギア＝メニュー、💣＝地雷）。没入時のみ表示 -->
       <div id="mobile-controls">
         <button id="gear-btn" aria-label="メニュー">⚙️</button>

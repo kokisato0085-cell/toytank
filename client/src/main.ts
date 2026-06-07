@@ -53,12 +53,11 @@ function bootGame(stage: StageData): Game {
     g.setInputMode(ctrlMode);
     g.onStageClear = () => {
       if (!campaignMode) return; // 自作の単発は1面クリアで全クリア（"CLEAR!"のまま）
-      const cleared = idx + 1; // ここまでにクリアした面数
       idx++;
       if (idx < campaign.length) {
-        const healed = cleared % 5 === 0 ? g.gainLife() : false; // 5面ごと残機+1
         g.loadStage(campaign[idx], false); // 残機は引き継ぐ
-        g.beginStage(`ステージ ${idx + 1}`, healed);
+        setClearGrant(); // このステージのクリアで+1するか（5/10/15）
+        g.beginStage(`ステージ ${idx + 1}`); // +1はクリア画面側で表示
         startBgm(0.2); // 次ステージはBGMを頭から
       }
     };
@@ -160,6 +159,11 @@ function backToTitle(): void {
   demoOn(); // タイトル背景デモを再開
 }
 
+// このステージをクリアすると残機+1か（公式キャンペーンの 5/10/15 クリア時）。
+function setClearGrant(): void {
+  if (game) game.clearGrantsLife = campaignMode && (idx + 1) % 5 === 0 && idx + 1 < campaign.length;
+}
+
 // ---- 各モードの開始 ----
 function startSolo(): void {
   demoOff(); // デモ停止＋実ゲームの音を有効化（loadStage の startBgm 前に）
@@ -168,6 +172,7 @@ function startSolo(): void {
   idx = 0;
   const g = bootGame(campaign[0]);
   g.loadStage(campaign[0], true); // 残機リセットで最初から
+  setClearGrant();
   g.beginStage("ステージ 1");
   setStatus("キャンペーンをプレイ中");
   enterGame();
@@ -292,6 +297,7 @@ function restart(): void {
   if (campaignMode) {
     idx = 0;
     game.loadStage(campaign[0], true); // 残機リセットで最初から
+    setClearGrant();
     game.beginStage("ステージ 1");
   } else {
     game.restart();

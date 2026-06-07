@@ -5,7 +5,7 @@
 
 import { campaignStages } from "./game/campaignStages";
 import { Game } from "./game/game";
-import { listSavedStages, loadSavedStage } from "./game/stageStore";
+import { listSavedStages, loadSavedStage, saveCampaign } from "./game/stageStore";
 import {
   getVolume,
   isMuted,
@@ -440,11 +440,27 @@ showScreen("title"); // 起動時はタイトル
 demoOn();
 updateGameActive(); // 起動時に縦持ちなら回転案内（ホームも横画面に統一）
 
-// 開発用ショートカット（localhost のみ）：?solo=N で任意ステージから開始（スクショ撮影等）。
+// 開発用ショートカット（localhost のみ）。
 if (import.meta.env.DEV) {
-  const soloParam = new URLSearchParams(location.search).get("solo");
+  const params = new URLSearchParams(location.search);
+  // ?solo=N で任意ステージから開始（スクショ撮影等）。
+  const soloParam = params.get("solo");
   if (soloParam) {
     const n = parseInt(soloParam, 10);
     if (Number.isFinite(n)) startSolo(n - 1); // 1始まり → idx
+  }
+  // ?seed で公式20面を localStorage へ書き出し → エディタで手直しできるようにする。
+  if (params.has("seed")) {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("toytank.stage.")) localStorage.removeItem(k);
+    }
+    const names: string[] = [];
+    for (const s of campaignStages()) {
+      localStorage.setItem(`toytank.stage.${s.name}`, JSON.stringify(s));
+      names.push(s.name);
+    }
+    saveCampaign(names);
+    alert(`公式${names.length}面を localStorage に書き出しました。editor.html で読み込んで編集できます。`);
+    location.replace("editor.html");
   }
 }

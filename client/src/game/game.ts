@@ -169,6 +169,8 @@ function makeEnemies(stage: StageData): Enemy[] {
 export class Game {
   private ctx: CanvasRenderingContext2D;
   private scale = 1;
+  private offsetX = 0; // ワールド描画のオフセット（没入時は黒帯ぶん中央へ寄せる）
+  private offsetY = 0;
   private input: Input;
   private spawn: { x: number; y: number };
   private pos: { x: number; y: number };
@@ -247,13 +249,27 @@ export class Game {
   // 没入時はビューポート全体（操作ボタンは画面の四隅にオーバーレイ＝縦予約しない）。
   private fit(): void {
     const { w, h } = worldSize(this.stage);
-    const full = this.immersive || !!document.fullscreenElement;
-    // 没入時はビューポート全体。通常(PC)は大きめ上限＋ヘッダ/操作説明ぶんの高さを控除。
-    const availW = full ? window.innerWidth - 4 : Math.min(1100, window.innerWidth - 20);
-    const availH = full ? window.innerHeight - 4 : window.innerHeight - 120;
-    this.scale = Math.min(availW / w, availH / h);
-    this.canvas.width = Math.round(w * this.scale);
-    this.canvas.height = Math.round(h * this.scale);
+    if (this.immersive) {
+      // 没入（スマホ）：キャンバスを画面いっぱいにし、アリーナは中央に黒帯込みで描く。
+      // → 黒帯部分もキャンバス内なので、そこにタッチしてパッドを置ける。
+      const cw = Math.floor(window.innerWidth);
+      const ch = Math.floor(window.innerHeight);
+      this.canvas.width = cw;
+      this.canvas.height = ch;
+      this.scale = Math.min((cw - 4) / w, (ch - 4) / h);
+      this.offsetX = (cw - w * this.scale) / 2;
+      this.offsetY = (ch - h * this.scale) / 2;
+    } else {
+      // 通常(PC)/全画面：キャンバス＝アリーナサイズ（CSSで中央寄せ・レターボックス）。
+      const full = !!document.fullscreenElement;
+      const availW = full ? window.innerWidth - 4 : Math.min(1100, window.innerWidth - 20);
+      const availH = full ? window.innerHeight - 4 : window.innerHeight - 120;
+      this.scale = Math.min(availW / w, availH / h);
+      this.canvas.width = Math.round(w * this.scale);
+      this.canvas.height = Math.round(h * this.scale);
+      this.offsetX = 0;
+      this.offsetY = 0;
+    }
   }
 
   // 別ステージを読み込む（キャンペーンの次ステージ等）。resetLives で残機を初期化するか選ぶ。
@@ -370,8 +386,8 @@ export class Game {
     if (this.input.isPc()) {
       const c = this.input.getCursor();
       if (!c) return null;
-      const dx = c.x / this.scale - this.pos.x;
-      const dy = c.y / this.scale - this.pos.y;
+      const dx = (c.x - this.offsetX) / this.scale - this.pos.x;
+      const dy = (c.y - this.offsetY) / this.scale - this.pos.y;
       const m = Math.hypot(dx, dy);
       if (m < 1) return null;
       return { x: dx / m, y: dy / m };
@@ -1220,7 +1236,13 @@ export class Game {
     const ctx = this.ctx;
     // 走行音：自機または敵が1体でも動いていれば鳴らす
     setLoop("engine", this.state === "playing" && (this.wasMoving || this.enemyMoving), 0.15); // 走行音（控えめ）
-    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+    if (this.immersive) {
+      // 没入時はキャンバスがアリーナより大きい＝黒帯を塗ってからアリーナを中央に描く
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+    ctx.setTransform(this.scale, 0, 0, this.scale, this.offsetX, this.offsetY);
     renderMap(ctx, this.stage);
     this.drawTracks(ctx);
     for (const dm of this.deathMarks) drawCross(ctx, dm.x, dm.y, dm.color);
@@ -1488,6 +1510,7 @@ export class Game {
     if (!d) return;
     const STEP_LEN = 6;
     const MAX_LEN = 900;
+    const cell = this.stage.grid.cell;
     let ex = this.pos.x;
     let ey = this.pos.y;
     for (let t = TANK_RADIUS; t <= MAX_LEN; t += STEP_LEN) {
@@ -1495,16 +1518,33 @@ export class Game {
       const py = this.pos.y + d.y * t;
       ex = px;
       ey = py;
-      if (circleHitsSolid(this.stage, px, py, 2)) break;
+      // 壁（鋼/壊せる壁）で止める。穴は弾が通過するので射線も通す。
+      if (isWallCell(this.stage, Math.floor(px / cell), Math.floor(py / cell))) break;
       if (this.enemies.some((e) => this.near(px, py, e.x, e.y))) break;
     }
-    ctx.strokeStyle = COLORS.aim;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([8, 8]);
+    ctx.save();
+    ctx.lineCap = "round";
+    // 暗い縁取り（明るい床でも視認できるように）
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 6;
     ctx.beginPath();
     ctx.moveTo(this.pos.x, this.pos.y);
     ctx.lineTo(ex, ey);
     ctx.stroke();
+    // 明るい本体（破線）
+    ctx.strokeStyle = COLORS.aim;
+    ctx.lineWidth = 3.5;
+    ctx.setLineDash([10, 8]);
+    ctx.beginPath();
+    ctx.moveTo(this.pos.x, this.pos.y);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    // 着弾点マーカー
     ctx.setLineDash([]);
+    ctx.fillStyle = COLORS.aim;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 }

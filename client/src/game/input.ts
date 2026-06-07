@@ -7,6 +7,7 @@ const MAX_R = 60; // スティックの最大引っ張り半径(px)
 const KNOB_R = 24;
 const TAP_THRESH = 14; // この距離未満のドラッグはタップ扱い
 const AIM_MIN = 14; // この距離以上で照準線を表示
+const MOVE_DEADZONE = 8; // これを超えたら最大速度で移動（少し入れたら全速）
 
 interface Stick {
   id: number;
@@ -114,13 +115,10 @@ export class Input {
   // 移動ベクトル（移動スティック優先、なければキーボード）。大きさ最大1。
   axis(): { x: number; y: number } {
     if (this.move.active) {
-      let { x, y } = this.dragVec(this.move);
+      const { x, y } = this.dragVec(this.move);
       const m = Math.hypot(x, y);
-      if (m > MAX_R) {
-        x = (x / m) * MAX_R;
-        y = (y / m) * MAX_R;
-      }
-      return { x: x / MAX_R, y: y / MAX_R };
+      if (m < MOVE_DEADZONE) return { x: 0, y: 0 }; // ごく僅かは無入力
+      return { x: x / m, y: y / m }; // 少しでも入れたら方向そのままで最大速度
     }
     let x = 0;
     let y = 0;

@@ -18,7 +18,7 @@ export const COLORS = {
   barrel: "#222",
   bulletP: "#1b4e8a", // 自機の弾
   bulletE: "#7a2018", // 敵の弾
-  aim: "rgba(45,125,210,0.7)", // 照準線
+  aim: "rgba(90,200,255,0.95)", // 照準線（明るめ・視認性UP）
   explosion: "#ffb020", // 弾相殺の爆発
 };
 

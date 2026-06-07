@@ -253,16 +253,23 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-action]")) {
   });
 }
 
-// ---- 操作モード（PC/スマホ）----
-const modeSel = document.getElementById("ctrl-mode") as HTMLSelectElement | null;
-if (modeSel) {
-  modeSel.value = ctrlMode;
-  modeSel.addEventListener("change", () => {
-    ctrlMode = modeSel.value as "mobile" | "pc";
-    localStorage.setItem("toytank.ctrlmode", ctrlMode);
-    game?.setInputMode(ctrlMode);
-  });
-}
+// ---- PC用 設定タブ（⚙設定で開閉。💣地雷・🔊音・音量を収納）----
+const pcPanel = document.getElementById("pc-panel");
+const pcVol = document.getElementById("pc-volume") as HTMLInputElement | null;
+const pcVolVal = document.getElementById("pc-volume-val");
+document.getElementById("pc-gear")?.addEventListener("click", () => {
+  const open = !pcPanel?.classList.contains("open");
+  pcPanel?.classList.toggle("open", open);
+  if (open && pcVol) {
+    pcVol.value = String(Math.round(getVolume() * 100));
+    if (pcVolVal) pcVolVal.textContent = `${Math.round(getVolume() * 100)}%`;
+  }
+});
+pcVol?.addEventListener("input", () => {
+  setVolume(parseInt(pcVol.value, 10) / 100);
+  unlockSound();
+  if (pcVolVal) pcVolVal.textContent = `${pcVol.value}%`;
+});
 
 // ---- ゲーム画面のボタン ----
 document.getElementById("btn-mine")?.addEventListener("click", () => game?.layMine());

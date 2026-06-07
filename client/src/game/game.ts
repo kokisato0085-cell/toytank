@@ -246,8 +246,9 @@ export class Game {
   private fit(): void {
     const { w, h } = worldSize(this.stage);
     const full = this.immersive || !!document.fullscreenElement;
-    const availW = full ? window.innerWidth - 4 : Math.min(760, window.innerWidth - 20);
-    const availH = full ? window.innerHeight - 4 : window.innerHeight - 24;
+    // 没入時はビューポート全体。通常(PC)は大きめ上限＋ヘッダ/操作説明ぶんの高さを控除。
+    const availW = full ? window.innerWidth - 4 : Math.min(1100, window.innerWidth - 20);
+    const availH = full ? window.innerHeight - 4 : window.innerHeight - 120;
     this.scale = Math.min(availW / w, availH / h);
     this.canvas.width = Math.round(w * this.scale);
     this.canvas.height = Math.round(h * this.scale);
@@ -580,8 +581,8 @@ export class Game {
     // 弾が当たった地雷を即起爆（連鎖含む）
     if (mineHits.length) this.detonate(mineHits);
 
-    // 地雷（設置要求の処理＋信管起爆）
-    for (let n = this.input.takeMines(); n > 0; n--) this.layMine();
+    // 地雷（設置要求の処理＋信管起爆）。デモはオートパイロットが設置するので入力は無視。
+    if (!this.demo) for (let n = this.input.takeMines(); n > 0; n--) this.layMine();
     this.updateMines(dt);
 
     // クリア判定（敵を全滅）

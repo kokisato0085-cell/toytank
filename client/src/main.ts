@@ -105,7 +105,11 @@ async function exitFullscreen(): Promise<void> {
     /* 無視 */
   }
   try {
-    if (document.fullscreenElement) await document.exitFullscreen();
+    // ゲーム自体(#screen-game)を全画面化していたスマホの没入だけ解除する。
+    // 手動の全画面（設定/⚙＝ページ全体 documentElement）はタイトルに戻っても維持する。
+    if (document.fullscreenElement && document.fullscreenElement === document.getElementById("screen-game")) {
+      await document.exitFullscreen();
+    }
   } catch {
     /* 無視 */
   }

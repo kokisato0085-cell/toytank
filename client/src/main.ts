@@ -169,15 +169,15 @@ function setClearGrant(): void {
 }
 
 // ---- 各モードの開始 ----
-function startSolo(): void {
+function startSolo(startIdx = 0): void {
   demoOff(); // デモ停止＋実ゲームの音を有効化（loadStage の startBgm 前に）
   campaign = campaignStages(); // 公式20面（コードが唯一の出所）
   campaignMode = true;
-  idx = 0;
-  const g = bootGame(campaign[0]);
-  g.loadStage(campaign[0], true); // 残機リセットで最初から
+  idx = Math.max(0, Math.min(startIdx, campaign.length - 1));
+  const g = bootGame(campaign[idx]);
+  g.loadStage(campaign[idx], true); // 残機リセットで最初から
   setClearGrant();
-  g.beginStage("ステージ 1");
+  g.beginStage(`ステージ ${idx + 1}`);
   setStatus("キャンペーンをプレイ中");
   enterGame();
 }
@@ -434,3 +434,12 @@ function demoOff(): void {
 initDemo();
 showScreen("title"); // 起動時はタイトル
 demoOn();
+
+// 開発用ショートカット（localhost のみ）：?solo=N で任意ステージから開始（スクショ撮影等）。
+if (import.meta.env.DEV) {
+  const soloParam = new URLSearchParams(location.search).get("solo");
+  if (soloParam) {
+    const n = parseInt(soloParam, 10);
+    if (Number.isFinite(n)) startSolo(n - 1); // 1始まり → idx
+  }
+}

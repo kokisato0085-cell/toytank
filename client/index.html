@@ -91,6 +91,13 @@
       .controls-legend .lbl b { color: var(--accent); font-size: 14px; }
       .controls-legend .lbl small { color: var(--muted); font-size: 12px; margin-top: 2px; }
       #screen-game.immersive .controls-legend { display: none; }
+      /* 設定画面内の操作ガイド（左寄せ） */
+      .set-h2 { font-size: 16px; margin: 20px 0 6px; color: var(--text); }
+      .set-legend { justify-content: flex-start; margin: 8px 0 0; }
+      /* プレイ中の設定パネル内の操作リファレンス（コンパクト） */
+      .gp-help { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; max-width: 320px; }
+      .gp-help b { color: var(--accent); font-size: 13px; }
+      #pc-panel .gp-help { flex-basis: 100%; max-width: none; }
 
       /* フルスクリーン（⛶ボタン）：ページ全体を全画面化。ゲーム中はキャンバスを中央＋最大化 */
       :fullscreen body { padding: 0; }
@@ -208,6 +215,15 @@
       <div class="row">
         <button id="set-fullscreen">⛶ フルスクリーン</button>
       </div>
+
+      <h2 class="set-h2">操作方法</h2>
+      <div class="controls-legend set-legend">
+        <div class="ctrl"><span class="ic">🕹️</span><span class="lbl"><b>移動</b><small>WASD / 矢印キー</small></span></div>
+        <div class="ctrl"><span class="ic">🎯</span><span class="lbl"><b>照準</b><small>マウスを動かす</small></span></div>
+        <div class="ctrl"><span class="ic">💥</span><span class="lbl"><b>発射</b><small>クリック（狙い）/ Space（正面）</small></span></div>
+        <div class="ctrl"><span class="ic">💣</span><span class="lbl"><b>地雷</b><small>E キー</small></span></div>
+      </div>
+      <p class="muted-note" style="margin-top: 12px;">スマホ：左半分ドラッグ＝移動 / 右半分ドラッグ→離す＝照準発射 / タップ＝即撃ち / 💣ボタン＝地雷</p>
       <p class="muted-note">※ 操作方法のカスタマイズは今後追加予定です。</p>
     </section>
 
@@ -238,16 +254,16 @@
         <button id="btn-mute">🔊 音 ON</button>
         <button id="btn-mine">💣 地雷を置く</button>
         <button id="btn-fullscreen">⛶ フルスクリーン</button>
+        <div class="gp-help">
+          <b>操作</b>
+          <div>🕹️ 移動：PC=WASD/矢印 ／ スマホ=左ドラッグ</div>
+          <div>🎯 照準：PC=マウス ／ スマホ=右ドラッグ→離して発射</div>
+          <div>💥 即撃ち：PC=クリック/Space ／ スマホ=右タップ</div>
+          <div>💣 地雷：PC=E ／ スマホ=💣ボタン</div>
+        </div>
       </div>
       <p id="load-status" style="font-size: 13px; color: #9db0c2; min-height: 16px; margin: 2px 0;"></p>
       <canvas id="game" style="touch-action: none;"></canvas>
-      <!-- PC操作ガイド（アイコン付き）。将来チュートリアル化で差し替え予定 -->
-      <div class="controls-legend instructions">
-        <div class="ctrl"><span class="ic">🕹️</span><span class="lbl"><b>移動</b><small>WASD / 矢印キー</small></span></div>
-        <div class="ctrl"><span class="ic">🎯</span><span class="lbl"><b>照準</b><small>マウスを動かす</small></span></div>
-        <div class="ctrl"><span class="ic">💥</span><span class="lbl"><b>発射</b><small>クリック（狙い）/ Space（正面）</small></span></div>
-        <div class="ctrl"><span class="ic">💣</span><span class="lbl"><b>地雷</b><small>E キー</small></span></div>
-      </div>
       <!-- スマホ没入時の操作（ギア＝メニュー、💣＝地雷）。没入時のみ表示 -->
       <div id="mobile-controls">
         <button id="gear-btn" aria-label="メニュー">⚙️</button>
@@ -261,6 +277,13 @@
           <button id="gear-restart">↻ リスタート</button>
           <button id="gear-title">← タイトルに戻る</button>
           <button id="gear-fullscreen">⛶ 全画面を解除</button>
+          <div class="gp-help">
+            <b>操作</b>
+            <div>🕹️ 移動：PC=WASD/矢印 ／ スマホ=左ドラッグ</div>
+            <div>🎯 照準：PC=マウス ／ スマホ=右ドラッグ→離して発射</div>
+            <div>💥 即撃ち：PC=クリック/Space ／ スマホ=右タップ</div>
+            <div>💣 地雷：PC=E ／ スマホ=💣ボタン</div>
+          </div>
         </div>
       </div>
 

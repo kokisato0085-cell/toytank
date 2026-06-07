@@ -7,6 +7,15 @@
 弾は壁で跳ね返り（跳弾）、地雷を仕掛け、敵戦車を全滅させる。
 ソロ、またはオンライン2人協力（デュオ）で同じステージに挑める。
 
+## スクリーンショット
+
+<p align="center">
+  <img src="docs/screenshots/title.png" width="49%" alt="タイトル画面（背景で戦車AIが自動バトル）" />
+  <img src="docs/screenshots/gameplay.png" width="49%" alt="プレイ画面（跳弾・地雷で敵を全滅）" />
+  <img src="docs/screenshots/boss.png" width="49%" alt="ボス戦（体力バー付きの大型ボス）" />
+  <img src="docs/screenshots/gameover.png" width="49%" alt="リザルト（色別の撃破数を表示）" />
+</p>
+
 > 「はじめてのWii / Wii Play」収録の「戦車！」へのオマージュ作品です。
 > 名称・画像・音はすべて独自に用意します（既存IPの素材は使用しません）。
 > 画像素材（タイル・戦車など）は **Google Gemini で生成**したものを使用しています。

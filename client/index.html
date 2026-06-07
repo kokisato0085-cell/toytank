@@ -98,11 +98,13 @@
       :fullscreen #screen-game #load-status,
       :fullscreen #screen-game .controls-legend { display: none; }
       :fullscreen #screen-game canvas { border: none; }
-      :fullscreen #screen-game .gamebar.top {
-        position: fixed; top: 6px; left: 6px; z-index: 45;
-        background: rgba(0, 0, 0, 0.45); border-radius: 8px; padding: 3px 6px; margin: 0;
-      }
-      :fullscreen #screen-game #pc-panel.open { position: fixed; top: 52px; left: 6px; z-index: 45; }
+      /* 全画面では左上バー・PCタブを隠し、スマホ同様に右上の⚙ギアへ集約 */
+      :fullscreen #screen-game .gamebar.top,
+      :fullscreen #screen-game #pc-panel { display: none; }
+      :fullscreen #mobile-controls { display: block; }
+      /* 「全画面を解除」はギア内に、全画面のときだけ表示 */
+      #gear-fullscreen { display: none; }
+      :fullscreen #gear-fullscreen { display: block; }
 
       /* スマホ没入表示：ビューポート全体を黒で覆いキャンバスを最大化。
          操作ボタンは画面の四隅にオーバーレイ（縦スペースを予約しない）。
@@ -258,6 +260,7 @@
           </div>
           <button id="gear-restart">↻ リスタート</button>
           <button id="gear-title">← タイトルに戻る</button>
+          <button id="gear-fullscreen">⛶ 全画面を解除</button>
         </div>
       </div>
 

@@ -367,6 +367,10 @@ document.getElementById("gear-restart")?.addEventListener("click", () => {
   restart();
 });
 document.getElementById("gear-title")?.addEventListener("click", () => backToTitle());
+document.getElementById("gear-fullscreen")?.addEventListener("click", () => {
+  setGearOpen(false);
+  void toggleFullscreen();
+});
 // 💣はドラッグ移動中でも反応するよう pointerdown で即時発火（click はマルチタッチ中に抑制されがち）
 document.getElementById("mobile-mine")?.addEventListener("pointerdown", (e) => {
   e.preventDefault();

@@ -292,10 +292,11 @@
         <button id="result-restart">↻ もう一度プレイ</button>
         <button id="result-title">← タイトルへ戻る</button>
       </div>
-
-      <!-- スマホ縦持ち時の回転案内（横ロックできない端末＝iOS等のフォールバック）-->
-      <div id="rotate-hint">📱<br />端末を <b>横向き</b> にしてください</div>
     </section>
+
+    <!-- スマホ縦持ち時の回転案内。どの画面でも前面に出せるよう body 直下に置く
+         （#screen-game の中だとタイトル表示中=display:none で出せないため）-->
+    <div id="rotate-hint">📱<br />端末を <b>横向き</b> にしてください</div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -117,12 +117,14 @@ async function exitFullscreen(): Promise<void> {
 
 const rotateHint = document.getElementById("rotate-hint");
 
-// ゲームの稼働状態を更新：縦持ち（スマホ）なら回転案内を出して一時停止、横なら再開。
+// ゲームの稼働状態と回転案内を更新。
+// スマホで縦持ちのときは、タイトル含む全画面で「横向きにしてください」案内を出す
+// （ホーム画面も横画面に統一）。横持ちなら案内を消し、ゲーム画面なら再開する。
 function updateGameActive(): void {
-  const blocked = onGameScreen() && isMobile() && isPortrait();
-  if (rotateHint) rotateHint.style.display = blocked ? "flex" : "none";
-  if (!onGameScreen() || blocked) game?.pause();
-  else game?.resume();
+  const portrait = isMobile() && isPortrait();
+  if (rotateHint) rotateHint.style.display = portrait ? "flex" : "none";
+  if (onGameScreen() && !portrait) game?.resume();
+  else game?.pause();
 }
 window.addEventListener("resize", updateGameActive);
 window.addEventListener("orientationchange", updateGameActive);
@@ -158,9 +160,9 @@ function backToTitle(): void {
   setGearOpen(false);
   setImmersive(false);
   void exitFullscreen();
-  if (rotateHint) rotateHint.style.display = "none";
   showScreen("title");
   demoOn(); // タイトル背景デモを再開
+  updateGameActive(); // 縦持ちなら回転案内（ホームも横画面に）
 }
 
 // このステージをクリアすると残機+1か（公式キャンペーンの 5/10/15 クリア時）。
@@ -248,12 +250,14 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-action]")) {
         demoOff();
         buildCustomList();
         showScreen("custom");
+        updateGameActive();
         break;
       case "settings":
         game?.pause();
         demoOff();
         syncSettings();
         showScreen("settings");
+        updateGameActive();
         break;
       case "title":
         backToTitle();
@@ -434,6 +438,7 @@ function demoOff(): void {
 initDemo();
 showScreen("title"); // 起動時はタイトル
 demoOn();
+updateGameActive(); // 起動時に縦持ちなら回転案内（ホームも横画面に統一）
 
 // 開発用ショートカット（localhost のみ）：?solo=N で任意ステージから開始（スクショ撮影等）。
 if (import.meta.env.DEV) {

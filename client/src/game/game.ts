@@ -390,7 +390,7 @@ export class Game {
     this.demoFireCd -= dt;
     if (this.demoFireCd <= 0) {
       const e = this.demoNearestEnemy();
-      const canShoot = this.bullets.filter((b) => b.owner === 0).length < MAX_ACTIVE_BULLETS;
+      const canShoot = this.countPlayerBullets() < MAX_ACTIVE_BULLETS;
       const dir = e && canShoot ? computeAimDir(this.stage, this.pos.x, this.pos.y, e.x, e.y, true, MAX_BOUNCES) : null;
       if (dir) {
         this.fire(dir);
@@ -551,7 +551,7 @@ export class Game {
       this.demoCombat(dt); // オートパイロットの射撃・地雷
     } else {
       for (const f of this.input.takeFires()) {
-        if (this.bullets.filter((b) => b.owner === 0).length >= MAX_ACTIVE_BULLETS) break;
+        if (this.countPlayerBullets() >= MAX_ACTIVE_BULLETS) break;
         const fallback = { x: Math.cos(this.facing), y: Math.sin(this.facing) };
         const dir = f.cursor ? (this.playerAimDir() ?? fallback) : (f.dir ?? fallback);
         this.fire(dir);
@@ -628,8 +628,9 @@ export class Game {
     if (!this.demo) for (let n = this.input.takeMines(); n > 0; n--) this.layMine();
     this.updateMines(dt);
 
-    // クリア判定（敵を全滅）
-    if (this.enemies.length === 0) {
+    // クリア判定（敵を全滅）。ただし同フレームに自機が大破（dying等）した場合はクリアより死亡を優先する
+    // （例：1つの爆発で自機と最後の敵が同時に倒れたケース。state が dying に変わっているので素通りさせない）。
+    if (this.state === "playing" && this.enemies.length === 0) {
       playSound("clear", { volume: 0.7 }); // ステージクリア音
       if (this.onStageClear) {
         // キャンペーン：ステージ背景を残したままクリアポップアップ → 待機後に次へ（loopで処理）
@@ -729,6 +730,13 @@ export class Game {
 
   private dist(ax: number, ay: number, bx: number, by: number): number {
     return Math.hypot(ax - bx, ay - by);
+  }
+
+  // 自機の弾数を数える（同時発射上限の判定用）。毎回の filter による配列確保を避ける。
+  private countPlayerBullets(): number {
+    let n = 0;
+    for (const b of this.bullets) if (b.owner === 0) n++;
+    return n;
   }
 
   // 敵の当たり半径（タイプのサイズ倍率を反映）。

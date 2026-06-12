@@ -6,7 +6,7 @@ import { TILE } from "../stage/types";
 import type { StageData, TileValue } from "../stage/types";
 import { ENEMY_TYPES, getEnemyType, type EnemyType } from "../stage/enemyTypes";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
-import { circleHitsSolid, isSolidCell, isWallCell, slide } from "./physics";
+import { circleHitsSolid, isSolidCell, isWallCell, slide, stepReflect, type RayStep } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, friendlyBlocksPath, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
@@ -892,44 +892,20 @@ export class Game {
   ): { ux: number; uy: number; px: number; py: number; t: number } | null {
     const cell = this.stage.grid.cell;
     const speed = Math.hypot(b.vx, b.vy) || 1;
-    let ux = b.vx / speed;
-    let uy = b.vy / speed;
-    let x = b.x;
-    let y = b.y;
-    let bounces = b.bounces;
+    // 速度は単位ベクトルに正規化し、dt=step で進める（実弾と同じ反射物理を共有）。
+    const ray: RayStep = { x: b.x, y: b.y, vx: b.vx / speed, vy: b.vy / speed, bounces: b.bounces };
     const step = cell * 0.2;
     const horizon = speed * 1.5; // 約1.5秒先まで警戒（シルバーは過敏に避ける）
     let traveled = 0;
     const guard = Math.ceil(horizon / step) + 8;
     for (let s = 0; s < guard && traveled < horizon; s++) {
-      if (Math.hypot(x - e.x, y - e.y) < danger) {
-        return { ux, uy, px: x, py: y, t: traveled / speed };
+      if (Math.hypot(ray.x - e.x, ray.y - e.y) < danger) {
+        return { ux: ray.vx, uy: ray.vy, px: ray.x, py: ray.y, t: traveled / speed };
       }
-      let nx = x + ux * step;
-      let ny = y + uy * step;
-      {
-        const col = Math.floor(nx / cell);
-        const row = Math.floor(y / cell);
-        if (isWallCell(this.stage, col, row)) {
-          if (bounces <= 0) return null; // 反射しきって消える＝以降は脅威にならない
-          bounces--;
-          ux = -ux;
-          nx = x;
-        }
-      }
-      {
-        const col = Math.floor(nx / cell);
-        const row = Math.floor(ny / cell);
-        if (isWallCell(this.stage, col, row)) {
-          if (bounces <= 0) return null;
-          bounces--;
-          uy = -uy;
-          ny = y;
-        }
-      }
-      traveled += Math.hypot(nx - x, ny - y);
-      x = nx;
-      y = ny;
+      const ox = ray.x;
+      const oy = ray.y;
+      if (!stepReflect(this.stage, ray, step)) return null; // 反射しきって消える＝以降は脅威にならない
+      traveled += Math.hypot(ray.x - ox, ray.y - oy);
     }
     return null;
   }

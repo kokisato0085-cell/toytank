@@ -47,6 +47,50 @@ export function circleHitsSolid(stage: StageData, x: number, y: number, r: numbe
   return false;
 }
 
+// 軌道シミュレーション用の点の状態（位置・速度・残り反射回数）。
+// 実弾(advanceBullet)・AIの照準/同士討ち判定(ai.ts)・弾避け予測(game.ts)で共有する。
+export interface RayStep {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  bounces: number; // 残り反射回数
+}
+
+// (x,y) を速度 (vx,vy) で dt 進める。壁（鋼・壊せる壁・場外）で軸平行反射し、反射ごとに bounces を1消費する。
+// 反射回数を使い切った状態で壁に当たったら false（＝弾は消滅すべき）。壁が無ければ位置・速度を更新して true。
+// X→Y の順で軸別に解決する（実弾とAI予測で同一の反射物理を使うための共通実装）。
+export function stepReflect(stage: StageData, s: RayStep, dt: number): boolean {
+  const { cell } = stage.grid;
+  let nx = s.x + s.vx * dt;
+  let ny = s.y + s.vy * dt;
+  // X 軸方向の壁（移動前の y で判定）
+  {
+    const col = Math.floor(nx / cell);
+    const row = Math.floor(s.y / cell);
+    if (isWallCell(stage, col, row)) {
+      if (s.bounces <= 0) return false;
+      s.bounces--;
+      s.vx = -s.vx;
+      nx = s.x; // 壁にめり込ませない
+    }
+  }
+  // Y 軸方向の壁（X 解決後の位置で判定）
+  {
+    const col = Math.floor(nx / cell);
+    const row = Math.floor(ny / cell);
+    if (isWallCell(stage, col, row)) {
+      if (s.bounces <= 0) return false;
+      s.bounces--;
+      s.vy = -s.vy;
+      ny = s.y;
+    }
+  }
+  s.x = nx;
+  s.y = ny;
+  return true;
+}
+
 // (x,y) から (nx,ny) への移動を軸別に解決する（壁ずり）。
 // blocked(px,py) が「その中心位置が塞がれているか」を返す。X を先に、次に解決済みXのまま Y を試す。
 export function slide(

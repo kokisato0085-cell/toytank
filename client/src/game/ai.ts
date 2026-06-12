@@ -3,7 +3,7 @@
 // バンクショットを軌道シミュレーションで探索する。反射回数は弾の bounces 分まで。
 // 射線が通る方向（正規化ベクトル）を返す。撃てる解がなければ null。
 
-import { isWallCell } from "./physics";
+import { isWallCell, stepReflect, type RayStep } from "./physics";
 import { BULLET_RADIUS, TANK_RADIUS } from "./constants";
 import type { StageData } from "../stage/types";
 
@@ -78,49 +78,22 @@ function traceClosest(
   maxDist: number,
 ): number {
   const cell = stage.grid.cell;
-  const step = cell * 0.25; // 1ステップの進み（セルの1/4）
-  let x = ex;
-  let y = ey;
-  let vx = ux;
-  let vy = uy;
-  let bounces = maxBounce;
+  const step = cell * 0.25; // 1ステップの進み（セルの1/4）。速度は単位ベクトルなので dt=step で進む
+  const ray: RayStep = { x: ex, y: ey, vx: ux, vy: uy, bounces: maxBounce };
   let traveled = 0;
   let best = Infinity;
   const skip = TANK_RADIUS * 1.5; // 発射直後の自分付近は無視（自爆距離を当てない）
   const guard = Math.ceil(maxDist / step) + 8;
   for (let s = 0; s < guard && traveled < maxDist; s++) {
-    let nx = x + vx * step;
-    let ny = y + vy * step;
-    // X 軸方向の壁
-    {
-      const col = Math.floor(nx / cell);
-      const row = Math.floor(y / cell);
-      if (isWallCell(stage, col, row)) {
-        if (bounces <= 0) return best;
-        bounces--;
-        vx = -vx;
-        nx = x;
-      }
-    }
-    // Y 軸方向の壁
-    {
-      const col = Math.floor(nx / cell);
-      const row = Math.floor(ny / cell);
-      if (isWallCell(stage, col, row)) {
-        if (bounces <= 0) return best;
-        bounces--;
-        vy = -vy;
-        ny = y;
-      }
-    }
+    const ox = ray.x;
+    const oy = ray.y;
+    if (!stepReflect(stage, ray, step)) return best; // 反射しきって消滅＝以降は届かない
     if (traveled > skip) {
-      const d = segDist(x, y, nx, ny, px, py);
+      const d = segDist(ox, oy, ray.x, ray.y, px, py);
       if (d < best) best = d;
       if (best <= HIT_TOL) return best;
     }
-    traveled += Math.hypot(nx - x, ny - y);
-    x = nx;
-    y = ny;
+    traveled += Math.hypot(ray.x - ox, ray.y - oy);
   }
   return best;
 }
@@ -145,46 +118,21 @@ export function friendlyBlocksPath(
   if (friends.length === 0) return false;
   const cell = stage.grid.cell;
   const step = cell * 0.25;
-  let x = ex;
-  let y = ey;
-  let vx = ux;
-  let vy = uy;
-  let bounces = maxBounce;
+  const ray: RayStep = { x: ex, y: ey, vx: ux, vy: uy, bounces: maxBounce };
   let traveled = 0;
   const skip = TANK_RADIUS * 1.5; // 発射直後の自分付近は無視（自分を仲間扱いしない）
   const guard = Math.ceil(maxDist / step) + 8;
   for (let s = 0; s < guard && traveled < maxDist; s++) {
-    let nx = x + vx * step;
-    let ny = y + vy * step;
-    // X 軸方向の壁
-    {
-      const col = Math.floor(nx / cell);
-      const row = Math.floor(y / cell);
-      if (isWallCell(stage, col, row)) {
-        if (bounces <= 0) return false; // 壁で消える＝以降は届かない
-        bounces--;
-        vx = -vx;
-        nx = x;
-      }
-    }
-    // Y 軸方向の壁
-    {
-      const col = Math.floor(nx / cell);
-      const row = Math.floor(ny / cell);
-      if (isWallCell(stage, col, row)) {
-        if (bounces <= 0) return false;
-        bounces--;
-        vy = -vy;
-        ny = y;
-      }
-    }
+    const ox = ray.x;
+    const oy = ray.y;
+    if (!stepReflect(stage, ray, step)) return false; // 壁で消える＝以降は届かない
     if (traveled > skip) {
       // この区間で先に当たるのは対象か仲間か（最接近距離で手前を判定）
-      const dp = segDist(x, y, nx, ny, px, py);
+      const dp = segDist(ox, oy, ray.x, ray.y, px, py);
       let df = Infinity;
       let fr = 0;
       for (const f of friends) {
-        const d = segDist(x, y, nx, ny, f.x, f.y);
+        const d = segDist(ox, oy, ray.x, ray.y, f.x, f.y);
         if (d < df) {
           df = d;
           fr = f.r;
@@ -196,9 +144,7 @@ export function friendlyBlocksPath(
       if (friendHit) return true;
       if (playerHit) return false; // 仲間より先にプレイヤーへ届く
     }
-    traveled += Math.hypot(nx - x, ny - y);
-    x = nx;
-    y = ny;
+    traveled += Math.hypot(ray.x - ox, ray.y - oy);
   }
   return false; // プレイヤーに届く前に仲間に当たらなかった
 }

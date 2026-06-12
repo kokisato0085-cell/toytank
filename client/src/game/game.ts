@@ -6,7 +6,7 @@ import { TILE } from "../stage/types";
 import type { StageData, TileValue } from "../stage/types";
 import { ENEMY_TYPES, getEnemyType, type EnemyType } from "../stage/enemyTypes";
 import { COLORS, cellCenter, drawBullet, drawExplosion, drawMine, drawTank, renderMap, worldSize } from "./render";
-import { circleHitsSolid, isSolidCell, isWallCell, slide } from "./physics";
+import { circleHitsSolid, isSolidCell, isWallCell, slide, stepReflect, type RayStep } from "./physics";
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, friendlyBlocksPath, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
@@ -99,6 +99,24 @@ function rotate(v: { x: number; y: number }, ang: number): { x: number; y: numbe
   const c = Math.cos(ang);
   const s = Math.sin(ang);
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+}
+
+// 戦車らしい旋回モデル（自機・敵で共通）。車体の向き heading を目標方向 desiredAng へ
+// 旋回レート上限で寄せ、前後どちらか近い軸を使う（真逆はバック＝旋回不要）。
+// 更新後の heading・前進方向 moveDir・目標へ整列したか aligned を返す。
+// ※実際の前進/スライド・移動フラグの扱いは呼び出し側に委ねる（自機と敵で挙動が異なるため）。
+function turnToward(heading: number, desiredAng: number, dt: number): { heading: number; moveDir: number; aligned: boolean } {
+  const diffF = angleNorm(desiredAng - heading);
+  const diffB = angleNorm(desiredAng - heading - Math.PI);
+  const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
+  const turnErr = forwardCloser ? diffF : diffB; // 近い側の軸を目標へ寄せる
+  const maxTurn = TANK_TURN_RATE * dt;
+  heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
+  const aligned =
+    Math.min(Math.abs(angleNorm(desiredAng - heading)), Math.abs(angleNorm(desiredAng - heading - Math.PI))) <
+    TANK_TURN_ALIGN;
+  const moveDir = forwardCloser ? heading : heading + Math.PI; // 前進 or バック
+  return { heading, moveDir, aligned };
 }
 
 // HUD/区切り画面用の小さな戦車アイコン（デバイス座標）。本体・砲塔とも上向き。
@@ -513,21 +531,13 @@ export class Game {
     const mag = Math.hypot(a.x, a.y);
     if (mag > 0.05 && this.fireStun <= 0) {
       const inAng = Math.atan2(a.y, a.x);
-      // 車体の「軸」に対する前後の角度差。前後どちらかに合っていれば旋回不要（＝逆方向は即バック）。
-      const diffF = angleNorm(inAng - this.heading);
-      const diffB = angleNorm(inAng - this.heading - Math.PI);
-      const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
-      const turnErr = forwardCloser ? diffF : diffB; // 近い側の軸を入力へ寄せる
-      const maxTurn = TANK_TURN_RATE * dt;
-      this.heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
-      const aligned =
-        Math.min(Math.abs(angleNorm(inAng - this.heading)), Math.abs(angleNorm(inAng - this.heading - Math.PI))) <
-        TANK_TURN_ALIGN;
-      if (this.wasMoving || aligned) {
-        const moveDir = forwardCloser ? this.heading : this.heading + Math.PI; // 前進 or バック
+      // 共通の旋回モデルで車体向きを入力方向へ寄せる（前後どちらか近い軸＝逆方向は即バック）。
+      const turn = turnToward(this.heading, inAng, dt);
+      this.heading = turn.heading;
+      if (this.wasMoving || turn.aligned) {
         const step = TANK_SPEED * mag * dt;
-        const nx = this.pos.x + Math.cos(moveDir) * step;
-        const ny = this.pos.y + Math.sin(moveDir) * step;
+        const nx = this.pos.x + Math.cos(turn.moveDir) * step;
+        const ny = this.pos.y + Math.sin(turn.moveDir) * step;
         const blocked = (px: number, py: number): boolean =>
           circleHitsSolid(this.stage, px, py, TANK_RADIUS) || this.hitsEnemy(px, py);
         this.pos = slide(this.pos.x, this.pos.y, nx, ny, blocked);
@@ -860,20 +870,13 @@ export class Game {
     wasMoving: boolean,
     blocked: (px: number, py: number) => boolean,
   ): { x: number; y: number; heading: number; moved: boolean } {
-    const diffF = angleNorm(desiredAng - heading);
-    const diffB = angleNorm(desiredAng - heading - Math.PI);
-    const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
-    const turnErr = forwardCloser ? diffF : diffB;
-    const maxTurn = TANK_TURN_RATE * dt;
-    heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
-    const aligned =
-      Math.min(Math.abs(angleNorm(desiredAng - heading)), Math.abs(angleNorm(desiredAng - heading - Math.PI))) <
-      TANK_TURN_ALIGN;
+    // 共通の旋回モデルで車体向きを目標へ寄せる（自機の移動と同一）。
+    const turn = turnToward(heading, desiredAng, dt);
+    heading = turn.heading;
     let moved = false;
-    if (wasMoving || aligned) {
-      const moveDir = forwardCloser ? heading : heading + Math.PI;
+    if (wasMoving || turn.aligned) {
       const step = speed * dt;
-      const slid = slide(x, y, x + Math.cos(moveDir) * step, y + Math.sin(moveDir) * step, blocked);
+      const slid = slide(x, y, x + Math.cos(turn.moveDir) * step, y + Math.sin(turn.moveDir) * step, blocked);
       if (Math.hypot(slid.x - x, slid.y - y) > step * 0.15) {
         x = slid.x;
         y = slid.y;
@@ -892,44 +895,20 @@ export class Game {
   ): { ux: number; uy: number; px: number; py: number; t: number } | null {
     const cell = this.stage.grid.cell;
     const speed = Math.hypot(b.vx, b.vy) || 1;
-    let ux = b.vx / speed;
-    let uy = b.vy / speed;
-    let x = b.x;
-    let y = b.y;
-    let bounces = b.bounces;
+    // 速度は単位ベクトルに正規化し、dt=step で進める（実弾と同じ反射物理を共有）。
+    const ray: RayStep = { x: b.x, y: b.y, vx: b.vx / speed, vy: b.vy / speed, bounces: b.bounces };
     const step = cell * 0.2;
     const horizon = speed * 1.5; // 約1.5秒先まで警戒（シルバーは過敏に避ける）
     let traveled = 0;
     const guard = Math.ceil(horizon / step) + 8;
     for (let s = 0; s < guard && traveled < horizon; s++) {
-      if (Math.hypot(x - e.x, y - e.y) < danger) {
-        return { ux, uy, px: x, py: y, t: traveled / speed };
+      if (Math.hypot(ray.x - e.x, ray.y - e.y) < danger) {
+        return { ux: ray.vx, uy: ray.vy, px: ray.x, py: ray.y, t: traveled / speed };
       }
-      let nx = x + ux * step;
-      let ny = y + uy * step;
-      {
-        const col = Math.floor(nx / cell);
-        const row = Math.floor(y / cell);
-        if (isWallCell(this.stage, col, row)) {
-          if (bounces <= 0) return null; // 反射しきって消える＝以降は脅威にならない
-          bounces--;
-          ux = -ux;
-          nx = x;
-        }
-      }
-      {
-        const col = Math.floor(nx / cell);
-        const row = Math.floor(ny / cell);
-        if (isWallCell(this.stage, col, row)) {
-          if (bounces <= 0) return null;
-          bounces--;
-          uy = -uy;
-          ny = y;
-        }
-      }
-      traveled += Math.hypot(nx - x, ny - y);
-      x = nx;
-      y = ny;
+      const ox = ray.x;
+      const oy = ray.y;
+      if (!stepReflect(this.stage, ray, step)) return null; // 反射しきって消える＝以降は脅威にならない
+      traveled += Math.hypot(ray.x - ox, ray.y - oy);
     }
     return null;
   }

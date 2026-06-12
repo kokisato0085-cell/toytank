@@ -628,8 +628,9 @@ export class Game {
     if (!this.demo) for (let n = this.input.takeMines(); n > 0; n--) this.layMine();
     this.updateMines(dt);
 
-    // クリア判定（敵を全滅）
-    if (this.enemies.length === 0) {
+    // クリア判定（敵を全滅）。ただし同フレームに自機が大破（dying等）した場合はクリアより死亡を優先する
+    // （例：1つの爆発で自機と最後の敵が同時に倒れたケース。state が dying に変わっているので素通りさせない）。
+    if (this.state === "playing" && this.enemies.length === 0) {
       playSound("clear", { volume: 0.7 }); // ステージクリア音
       if (this.onStageClear) {
         // キャンペーン：ステージ背景を残したままクリアポップアップ → 待機後に次へ（loopで処理）

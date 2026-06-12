@@ -101,6 +101,24 @@ function rotate(v: { x: number; y: number }, ang: number): { x: number; y: numbe
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
+// 戦車らしい旋回モデル（自機・敵で共通）。車体の向き heading を目標方向 desiredAng へ
+// 旋回レート上限で寄せ、前後どちらか近い軸を使う（真逆はバック＝旋回不要）。
+// 更新後の heading・前進方向 moveDir・目標へ整列したか aligned を返す。
+// ※実際の前進/スライド・移動フラグの扱いは呼び出し側に委ねる（自機と敵で挙動が異なるため）。
+function turnToward(heading: number, desiredAng: number, dt: number): { heading: number; moveDir: number; aligned: boolean } {
+  const diffF = angleNorm(desiredAng - heading);
+  const diffB = angleNorm(desiredAng - heading - Math.PI);
+  const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
+  const turnErr = forwardCloser ? diffF : diffB; // 近い側の軸を目標へ寄せる
+  const maxTurn = TANK_TURN_RATE * dt;
+  heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
+  const aligned =
+    Math.min(Math.abs(angleNorm(desiredAng - heading)), Math.abs(angleNorm(desiredAng - heading - Math.PI))) <
+    TANK_TURN_ALIGN;
+  const moveDir = forwardCloser ? heading : heading + Math.PI; // 前進 or バック
+  return { heading, moveDir, aligned };
+}
+
 // HUD/区切り画面用の小さな戦車アイコン（デバイス座標）。本体・砲塔とも上向き。
 // 本編と同じスプライト戦車（drawTank）で描く（未ロード時は図形にフォールバック）。
 function drawTankIcon(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, radius = 9): void {
@@ -513,21 +531,13 @@ export class Game {
     const mag = Math.hypot(a.x, a.y);
     if (mag > 0.05 && this.fireStun <= 0) {
       const inAng = Math.atan2(a.y, a.x);
-      // 車体の「軸」に対する前後の角度差。前後どちらかに合っていれば旋回不要（＝逆方向は即バック）。
-      const diffF = angleNorm(inAng - this.heading);
-      const diffB = angleNorm(inAng - this.heading - Math.PI);
-      const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
-      const turnErr = forwardCloser ? diffF : diffB; // 近い側の軸を入力へ寄せる
-      const maxTurn = TANK_TURN_RATE * dt;
-      this.heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
-      const aligned =
-        Math.min(Math.abs(angleNorm(inAng - this.heading)), Math.abs(angleNorm(inAng - this.heading - Math.PI))) <
-        TANK_TURN_ALIGN;
-      if (this.wasMoving || aligned) {
-        const moveDir = forwardCloser ? this.heading : this.heading + Math.PI; // 前進 or バック
+      // 共通の旋回モデルで車体向きを入力方向へ寄せる（前後どちらか近い軸＝逆方向は即バック）。
+      const turn = turnToward(this.heading, inAng, dt);
+      this.heading = turn.heading;
+      if (this.wasMoving || turn.aligned) {
         const step = TANK_SPEED * mag * dt;
-        const nx = this.pos.x + Math.cos(moveDir) * step;
-        const ny = this.pos.y + Math.sin(moveDir) * step;
+        const nx = this.pos.x + Math.cos(turn.moveDir) * step;
+        const ny = this.pos.y + Math.sin(turn.moveDir) * step;
         const blocked = (px: number, py: number): boolean =>
           circleHitsSolid(this.stage, px, py, TANK_RADIUS) || this.hitsEnemy(px, py);
         this.pos = slide(this.pos.x, this.pos.y, nx, ny, blocked);
@@ -860,20 +870,13 @@ export class Game {
     wasMoving: boolean,
     blocked: (px: number, py: number) => boolean,
   ): { x: number; y: number; heading: number; moved: boolean } {
-    const diffF = angleNorm(desiredAng - heading);
-    const diffB = angleNorm(desiredAng - heading - Math.PI);
-    const forwardCloser = Math.abs(diffF) <= Math.abs(diffB);
-    const turnErr = forwardCloser ? diffF : diffB;
-    const maxTurn = TANK_TURN_RATE * dt;
-    heading += Math.abs(turnErr) <= maxTurn ? turnErr : Math.sign(turnErr) * maxTurn;
-    const aligned =
-      Math.min(Math.abs(angleNorm(desiredAng - heading)), Math.abs(angleNorm(desiredAng - heading - Math.PI))) <
-      TANK_TURN_ALIGN;
+    // 共通の旋回モデルで車体向きを目標へ寄せる（自機の移動と同一）。
+    const turn = turnToward(heading, desiredAng, dt);
+    heading = turn.heading;
     let moved = false;
-    if (wasMoving || aligned) {
-      const moveDir = forwardCloser ? heading : heading + Math.PI;
+    if (wasMoving || turn.aligned) {
       const step = speed * dt;
-      const slid = slide(x, y, x + Math.cos(moveDir) * step, y + Math.sin(moveDir) * step, blocked);
+      const slid = slide(x, y, x + Math.cos(turn.moveDir) * step, y + Math.sin(turn.moveDir) * step, blocked);
       if (Math.hypot(slid.x - x, slid.y - y) > step * 0.15) {
         x = slid.x;
         y = slid.y;

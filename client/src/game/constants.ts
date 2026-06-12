@@ -20,10 +20,9 @@ export const MINE_WARN = 2; // 起爆何秒前から警告点滅するか
 export const MINE_BLAST_CELLS = 2.0; // 爆発半径 = この係数 × cell
 export const MINE_BLAST_LIFE = 0.4; // 地雷の爆発エフェクトの寿命(秒)
 
-export const ENEMY_COOLDOWN_MOVER = 1.8; // 移動型の発射間隔(秒)
-export const ENEMY_COOLDOWN_STATIONARY = 2.6; // 静止型の発射間隔(秒)
-export const ENEMY_AIM_JITTER = 0.12; // 移動型の照準のばらつき(rad・約7°)
-export const MOVER_SPEED = 90; // 移動型の敵の速度(px/s)
+// ※ 発射間隔・照準ばらつき・移動速度は敵タイプごとの値（stage/enemyTypes.ts）が正。
+//    以前ここにあった ENEMY_COOLDOWN_MOVER/STATIONARY・ENEMY_AIM_JITTER・MOVER_SPEED は
+//    データ駆動化で未参照になったため削除した。
 export const ENEMY_NEAR = 280; // この距離内に自機がいると攻撃が激しくなる(px)
 export const ENEMY_CLOSE = 150; // これより近いと壁越しでも接近を続ける（それ以外は守備的に）(px)
 export const ENEMY_STANDOFF = 230; // 自機にこの距離まで近づいたら、追跡タイプでもそれ以上は詰めない(px)

@@ -87,6 +87,10 @@ interface Enemy {
 
 const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
 
+// チュートリアル（BasicDesign §15）の調整値。
+const TUT_MOVE_DIST = 160; // 移動ステップ達成に必要な累積移動距離(px)（約2.5セル）
+const TUT_DONE_HOLD = 1.8; // 「チュートリアル完了！」を表示してからタイトルへ戻るまでの秒
+
 // 角度を [-PI, PI] に正規化する。
 function angleNorm(x: number): number {
   while (x > Math.PI) x -= 2 * Math.PI;
@@ -226,6 +230,15 @@ export class Game {
   onGameOver: (() => void) | null = null;
   onCleared: (() => void) | null = null; // 全クリア（最終リザルト）に入った時
 
+  // チュートリアル（BasicDesign §15）。達成検知ステップ制＋プレイヤー無敵。
+  tutorial = false;
+  onTutorialDone: (() => void) | null = null; // 完了表示の後に呼ぶ（タイトルへ戻す）
+  private tutStep = 0; // 0=移動 1=即撃ち 2=エイム発射 3=地雷 4=仕上げ
+  private tutMove = 0; // 累積移動距離（ステップ0用）
+  private tutBrickBroken = false; // 地雷で壊せる壁を壊した（ステップ3用）
+  private tutFinalEnemies: Enemy[] = []; // 仕上げで出す敵（ステップ4到達まで保留）
+  private tutDoneTimer = 0; // 完了表示の残り秒（0で onTutorialDone）
+
   constructor(private canvas: HTMLCanvasElement, private stage: StageData) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D コンテキストを取得できません");
@@ -317,6 +330,9 @@ export class Game {
 
   // 別ステージを読み込む（キャンペーンの次ステージ等）。resetLives で残機を初期化するか選ぶ。
   loadStage(stage: StageData, resetLives: boolean): void {
+    // チュートリアル状態は既定で解除（startTutorial はこの後に tutorial=true を立てる）。
+    this.tutorial = false;
+    this.tutDoneTimer = 0;
     this.spawn = cellCenter(stage, stage.players[0]);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
@@ -339,6 +355,50 @@ export class Game {
     this.introHealed = healed;
     this.state = "intro";
     this.interTimer = INTRO_PAUSE;
+  }
+
+  // チュートリアル開始（BasicDesign §15）。練習ステージを読み込み、ステップ進行を初期化する。
+  // 仕上げ用の敵はステップ5到達まで出さない（途中で誤って倒してクリアにならないように退避）。
+  startTutorial(stage: StageData): void {
+    this.tutorial = true;
+    this.loadStage(stage, true); // 壁・敵を生成（残機リセット）
+    this.tutFinalEnemies = this.enemies; // 仕上げ用に退避
+    this.enemies = []; // ステップ5到達まで敵は出さない
+    this.tutStep = 0;
+    this.tutMove = 0;
+    this.tutBrickBroken = false;
+    this.tutDoneTimer = 0;
+    this.beginStage("チュートリアル");
+  }
+
+  // チュートリアルのステップ進行（毎フレーム呼ぶ）。各操作の達成イベントで次へ進める。
+  private tutAdvance(moved: number, fired: boolean, aimed: boolean): void {
+    if (this.tutDoneTimer > 0) return; // 完了演出中は進めない
+    switch (this.tutStep) {
+      case 0: // 移動
+        this.tutMove += moved;
+        if (this.tutMove >= TUT_MOVE_DIST) this.tutStep = 1;
+        break;
+      case 1: // 即撃ち（1発撃つ）
+        if (fired) this.tutStep = 2;
+        break;
+      case 2: // エイム発射（狙って撃つ）
+        if (aimed) this.tutStep = 3;
+        break;
+      case 3: // 地雷で壊せる壁を壊す
+        if (this.tutBrickBroken) {
+          this.tutStep = 4;
+          this.enemies = this.tutFinalEnemies; // 仕上げの敵を出す
+          this.tutFinalEnemies = [];
+        }
+        break;
+      case 4: // 仕上げ（敵を撃破）
+        if (this.enemies.length === 0) {
+          this.tutDoneTimer = TUT_DONE_HOLD;
+          playSound("clear", { volume: 0.7 });
+        }
+        break;
+    }
   }
 
   // 残機を1回復（上限 MAX_LIVES）。回復できたら true。
@@ -523,6 +583,19 @@ export class Game {
       return;
     }
 
+    // チュートリアル完了表示中：少し見せてからタイトルへ戻す。
+    if (this.tutorial && this.tutDoneTimer > 0) {
+      this.tutDoneTimer -= dt;
+      if (this.tutDoneTimer <= 0) {
+        this.tutorial = false;
+        this.onTutorialDone?.();
+      }
+    }
+    const tutFromX = this.pos.x; // チュートリアルの移動距離計測用
+    const tutFromY = this.pos.y;
+    let tutFired = false; // このフレームに撃ったか
+    let tutAimed = false; // このフレームに狙って撃ったか（PCクリック or ドラッグ照準）
+
     // 移動（戦車らしい旋回モデル）：車体の向き(heading)を入力方向へ旋回させてから前進。
     // 同方向の継続/再開は遅延なし。停止から別方向は向きを変える時間(=旋回)が要る。
     // 移動中の方向転換は止まらず曲がる（角ばって曲がる）。
@@ -565,6 +638,8 @@ export class Game {
         const fallback = { x: Math.cos(this.facing), y: Math.sin(this.facing) };
         const dir = f.cursor ? (this.playerAimDir() ?? fallback) : (f.dir ?? fallback);
         this.fire(dir);
+        tutFired = true;
+        if (f.cursor || f.dir) tutAimed = true; // PCクリック / エイムパッドのドラッグ＝狙い撃ち
       }
     }
 
@@ -596,6 +671,7 @@ export class Game {
       }
       // 自機への命中（自爆猶予経過後、または他者の弾）
       if ((b.owner !== 0 || b.age >= SELF_GRACE) && this.near(b.x, b.y, this.pos.x, this.pos.y)) {
+        if (this.tutorial) continue; // チュートリアルは無敵：弾を消すだけ（死なない）
         this.onPlayerDeath();
         return;
       }
@@ -640,7 +716,7 @@ export class Game {
 
     // クリア判定（敵を全滅）。ただし同フレームに自機が大破（dying等）した場合はクリアより死亡を優先する
     // （例：1つの爆発で自機と最後の敵が同時に倒れたケース。state が dying に変わっているので素通りさせない）。
-    if (this.state === "playing" && this.enemies.length === 0) {
+    if (this.state === "playing" && !this.tutorial && this.enemies.length === 0) {
       playSound("clear", { volume: 0.7 }); // ステージクリア音
       if (this.onStageClear) {
         // キャンペーン：ステージ背景を残したままクリアポップアップ → 待機後に次へ（loopで処理）
@@ -651,6 +727,12 @@ export class Game {
         // 単体ステージ：そのまま最終リザルトへ
         this.enterCleared();
       }
+    }
+
+    // チュートリアル：このフレームの達成イベントでステップを進める。
+    if (this.tutorial) {
+      const moved = this.dist(tutFromX, tutFromY, this.pos.x, this.pos.y);
+      this.tutAdvance(moved, tutFired, tutAimed);
     }
   }
 
@@ -711,9 +793,10 @@ export class Game {
       });
       // 3) 最後にブロックを破壊（↑の判定には影響させない）
       for (const [c, r] of bricks) this.stage.tiles[r][c] = TILE.FLOOR;
+      if (this.tutorial && bricks.length) this.tutBrickBroken = true; // 地雷ステップの達成
     }
     this.mines = this.mines.filter((_, j) => !det.has(j));
-    if (playerHit) this.onPlayerDeath();
+    if (playerHit && !this.tutorial) this.onPlayerDeath(); // チュートリアルは無敵
   }
 
   // 爆心(mx,my)から(tx,ty)が爆風範囲内かつ壁に遮られていないか。
@@ -1322,6 +1405,8 @@ export class Game {
 
     this.drawBossBar(ctx); // ボスがいれば体力バー
 
+    if (this.tutorial && (this.state === "playing" || this.tutDoneTimer > 0)) this.drawTutorial(ctx);
+
     if (this.state === "playing" || this.state === "dying") return; // 大破演出中は中央表示なし
     if (this.state === "intro") {
       this.drawIntro(ctx);
@@ -1341,6 +1426,41 @@ export class Game {
     }
     // cleared
     this.drawResult(ctx, "CLEAR!", "#7CFC9B");
+  }
+
+  // チュートリアルの操作説明（端末でラベルを出し分け。BasicDesign §15-d）。
+  private tutMessage(): string {
+    const pc = this.input.isPc();
+    switch (this.tutStep) {
+      case 0:
+        return pc ? "WASD / 矢印キーで動いてみよう" : "画面の左半分をドラッグして動こう";
+      case 1:
+        return pc ? "クリックで弾を撃ってみよう" : "画面の右半分を軽くタップして撃とう";
+      case 2:
+        return pc ? "ねらいを定めてクリックで撃とう" : "右半分をドラッグ→指を離して、ねらって撃とう";
+      case 3:
+        return pc ? "E キーか 💣 で地雷を置いて、茶色い壁を壊そう" : "💣 ボタンで地雷を置いて、茶色い壁を壊そう";
+      case 4:
+        return "仕上げ：敵の戦車を撃破しよう！";
+      default:
+        return "";
+    }
+  }
+
+  // チュートリアルの進行バナー（上部中央）／完了表示（中央）。
+  private drawTutorial(ctx: CanvasRenderingContext2D): void {
+    const cx = this.lw() / 2;
+    ctx.textAlign = "center";
+    if (this.tutDoneTimer > 0) {
+      ctx.font = "bold 30px sans-serif";
+      this.hudText(ctx, "チュートリアル完了！", cx, this.lh() / 2);
+      return;
+    }
+    const y = (this.immersive ? this.offsetY : 0) + 50;
+    ctx.font = "bold 13px sans-serif";
+    this.hudText(ctx, `STEP ${this.tutStep + 1} / 5`, cx, y);
+    ctx.font = "bold 18px sans-serif";
+    this.hudText(ctx, this.tutMessage(), cx, y + 22);
   }
 
   // ステージクリアのポップアップ（背景のステージは残したまま中央にパネル）。

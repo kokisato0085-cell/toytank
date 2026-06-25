@@ -331,7 +331,9 @@ document.addEventListener("fullscreenchange", () => {
 
 // ---- ゲーム画面のボタン ----
 document.getElementById("btn-mine")?.addEventListener("click", () => game?.layMine());
-document.getElementById("tutorial-skip")?.addEventListener("click", () => backToTitle()); // チュートリアルをスキップ
+// チュートリアルのスキップ（⚙設定タブ／⚙ギアメニューの中。tutorial-active の時だけ表示）
+document.getElementById("pc-skip")?.addEventListener("click", () => backToTitle());
+document.getElementById("gear-skip")?.addEventListener("click", () => backToTitle());
 
 const muteBtn = document.getElementById("btn-mute");
 function syncGameMuteBtn(): void {

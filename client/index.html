@@ -55,13 +55,9 @@
       .menu button:disabled { color: var(--muted); background: #141c26; cursor: not-allowed; }
       .badge { font-size: 11px; color: #fff; background: #c0392b; border-radius: 10px; padding: 2px 8px; }
       .badge.soon { background: #5a6b7d; }
-      /* チュートリアルのスキップボタン（既定は非表示。tutorial-active の時だけ左下に固定表示） */
-      #tutorial-skip { display: none; }
-      #screen-game.tutorial-active #tutorial-skip {
-        display: block; position: fixed; left: 10px; bottom: 10px; z-index: 30;
-        font-size: 13px; padding: 8px 12px; cursor: pointer;
-        color: #fff; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px;
-      }
+      /* チュートリアル専用のメニュー項目（⚙ギア／⚙設定タブ内）。tutorial-active の時だけ表示 */
+      .tut-only { display: none; }
+      #screen-game.tutorial-active .tut-only { display: block; }
 
       .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button, #set-fullscreen {
         background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
@@ -265,6 +261,7 @@
         <button id="btn-mute">🔊 音 ON</button>
         <button id="btn-mine">💣 地雷を置く</button>
         <button id="btn-fullscreen">⛶ フルスクリーン</button>
+        <button id="pc-skip" class="tut-only">⏭ チュートリアルをスキップ</button>
         <div class="gp-help">
           <b>操作</b>
           <div>🕹️ 移動：PC=WASD/矢印 ／ スマホ=左ドラッグ</div>
@@ -288,6 +285,7 @@
           <button id="gear-restart">↻ リスタート</button>
           <button id="gear-title">← タイトルに戻る</button>
           <button id="gear-fullscreen">⛶ 全画面を解除</button>
+          <button id="gear-skip" class="tut-only">⏭ チュートリアルをスキップ</button>
           <div class="gp-help">
             <b>操作</b>
             <div>🕹️ 移動：PC=WASD/矢印 ／ スマホ=左ドラッグ</div>
@@ -297,9 +295,6 @@
           </div>
         </div>
       </div>
-
-      <!-- チュートリアル中のスキップ（.tutorial-active の時のみ表示。PC/スマホ共通） -->
-      <button id="tutorial-skip">スキップ ⏭</button>
 
       <!-- リザルト（全クリア／残機ゼロ）時の選択ボタン -->
       <div id="result-overlay">

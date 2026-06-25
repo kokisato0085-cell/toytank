@@ -360,8 +360,8 @@ export class Game {
   // チュートリアル開始（BasicDesign §15）。練習ステージを読み込み、ステップ進行を初期化する。
   // 仕上げ用の敵はステップ5到達まで出さない（途中で誤って倒してクリアにならないように退避）。
   startTutorial(stage: StageData): void {
-    this.tutorial = true;
-    this.loadStage(stage, true); // 壁・敵を生成（残機リセット）
+    this.loadStage(stage, true); // 壁・敵を生成（残機リセット）。※内部で tutorial=false に戻る
+    this.tutorial = true; // loadStage の後に立てる（順序重要）
     this.tutFinalEnemies = this.enemies; // 仕上げ用に退避
     this.enemies = []; // ステップ5到達まで敵は出さない
     this.tutStep = 0;

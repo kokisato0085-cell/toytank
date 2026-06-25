@@ -4,6 +4,7 @@
 // 画面構成の設計: docs/BasicDesign.md §1.1。
 
 import { campaignStages } from "./game/campaignStages";
+import { tutorialStage } from "./game/tutorialStage";
 import { Game } from "./game/game";
 import { listSavedStages, loadSavedStage, saveCampaign } from "./game/stageStore";
 import {
@@ -63,6 +64,7 @@ function bootGame(stage: StageData): Game {
     };
     g.onGameOver = () => showResult(); // 残機ゼロ → リザルト選択
     g.onCleared = () => showResult(); // 全クリア → リザルト選択
+    g.onTutorialDone = () => backToTitle(); // チュートリアル完了 → タイトルへ
     g.start();
     game = g;
   }
@@ -158,6 +160,7 @@ function backToTitle(): void {
   stopBgm();
   hideResult();
   setGearOpen(false);
+  setTutorialUi(false); // チュートリアルのスキップボタンを隠す
   setImmersive(false);
   void exitFullscreen();
   showScreen("title");
@@ -199,6 +202,25 @@ function startCustom(name: string): void {
   g.beginStage(name);
   setStatus(`自作「${name}」をプレイ中`);
   enterGame();
+}
+
+// チュートリアル（BasicDesign §15）。練習ステージを単発で開始し、ステップ達成で進行。
+function startTutorial(): void {
+  demoOff(); // デモ停止＋実ゲームの音を有効化
+  const s = tutorialStage();
+  campaign = [s];
+  campaignMode = false;
+  idx = 0;
+  const g = bootGame(s);
+  g.startTutorial(s); // 無敵・ステップ進行を初期化（loadStage 込み）
+  setTutorialUi(true); // スキップボタンを表示
+  setStatus("チュートリアル");
+  enterGame();
+}
+
+// チュートリアル中だけスキップボタンを出す（ゲーム画面に .tutorial-active を付与）。
+function setTutorialUi(on: boolean): void {
+  gameSection?.classList.toggle("tutorial-active", on);
 }
 
 // ---- 自作ステージ一覧 ----
@@ -244,6 +266,9 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-action]")) {
     switch (el.dataset.action) {
       case "solo":
         startSolo();
+        break;
+      case "tutorial":
+        startTutorial();
         break;
       case "custom":
         game?.pause();
@@ -306,6 +331,7 @@ document.addEventListener("fullscreenchange", () => {
 
 // ---- ゲーム画面のボタン ----
 document.getElementById("btn-mine")?.addEventListener("click", () => game?.layMine());
+document.getElementById("tutorial-skip")?.addEventListener("click", () => backToTitle()); // チュートリアルをスキップ
 
 const muteBtn = document.getElementById("btn-mute");
 function syncGameMuteBtn(): void {
@@ -321,6 +347,10 @@ muteBtn?.addEventListener("click", () => {
 
 function restart(): void {
   if (!game) return;
+  if (game.tutorial) {
+    startTutorial(); // チュートリアル中のリスタートは最初からやり直す
+    return;
+  }
   hideResult();
   if (campaignMode) {
     idx = 0;

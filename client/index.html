@@ -49,9 +49,19 @@
       .menu button:hover, .menu a.btn:hover { background: var(--panel2); }
       .menu button:active, .menu a.btn:active { transform: translateY(1px); }
       .menu button[data-action="solo"] { background: var(--accent); color: var(--accentText); border-color: var(--accent); font-weight: 700; }
+      /* ソロ直下の小さめ項目（チュートリアル） */
+      .menu button.sub { font-size: 14px; padding: 10px 16px; margin-top: -4px; color: var(--muted); }
+      .menu button.sub:hover { color: var(--text); }
       .menu button:disabled { color: var(--muted); background: #141c26; cursor: not-allowed; }
       .badge { font-size: 11px; color: #fff; background: #c0392b; border-radius: 10px; padding: 2px 8px; }
       .badge.soon { background: #5a6b7d; }
+      /* チュートリアルのスキップボタン（既定は非表示。tutorial-active の時だけ左下に固定表示） */
+      #tutorial-skip { display: none; }
+      #screen-game.tutorial-active #tutorial-skip {
+        display: block; position: fixed; left: 10px; bottom: 10px; z-index: 30;
+        font-size: 13px; padding: 8px 12px; cursor: pointer;
+        color: #fff; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px;
+      }
 
       .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button, #set-fullscreen {
         background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
@@ -193,6 +203,7 @@
       <p class="tagline">2D 戦車バトル — 跳弾と地雷で敵を全滅させろ</p>
       <div class="menu">
         <button data-action="solo">ソロ（キャンペーン20面）</button>
+        <button class="sub" data-action="tutorial">チュートリアル（操作を練習）</button>
         <button disabled>Co-op マルチ <span class="badge soon">Coming Soon</span></button>
         <button disabled>PvP <span class="badge soon">Coming Soon</span></button>
         <button data-action="custom">自作ステージで遊ぶ</button>
@@ -286,6 +297,9 @@
           </div>
         </div>
       </div>
+
+      <!-- チュートリアル中のスキップ（.tutorial-active の時のみ表示。PC/スマホ共通） -->
+      <button id="tutorial-skip">スキップ ⏭</button>
 
       <!-- リザルト（全クリア／残機ゼロ）時の選択ボタン -->
       <div id="result-overlay">

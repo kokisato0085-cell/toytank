@@ -58,6 +58,21 @@
       /* チュートリアル専用のメニュー項目（⚙ギア／⚙設定タブ内）。tutorial-active の時だけ表示 */
       .tut-only { display: none; }
       #screen-game.tutorial-active .tut-only { display: block; }
+      /* Co-op ロビー */
+      #screen-coop { text-align: center; }
+      .coop-panel { max-width: 420px; margin: 0 auto; }
+      #coop-code {
+        font-size: 56px; font-weight: 800; letter-spacing: 10px; color: var(--accent);
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+        padding: 16px 8px; margin: 12px auto; user-select: all;
+      }
+      #coop-code-input {
+        font-size: 32px; font-weight: 800; letter-spacing: 8px; text-align: center; text-transform: uppercase;
+        width: 220px; padding: 10px; margin: 8px auto; display: block;
+        color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      }
+      .coop-ok { font-size: 24px; font-weight: 800; color: var(--accent); margin-top: 16px; }
+      #coop-join-status { min-height: 18px; color: #ff8080; }
 
       .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button, #set-fullscreen {
         background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
@@ -200,7 +215,7 @@
       <div class="menu">
         <button data-action="solo">ソロ（キャンペーン20面）</button>
         <button class="sub" data-action="tutorial">チュートリアル（操作を練習）</button>
-        <button disabled>Co-op マルチ <span class="badge soon">Coming Soon</span></button>
+        <button data-action="coop">Co-op マルチ（2人協力）</button>
         <button disabled>PvP <span class="badge soon">Coming Soon</span></button>
         <button data-action="custom">自作ステージで遊ぶ</button>
         <a class="btn" href="editor.html">ToyTank Maker（ステージを作る）</a>
@@ -242,6 +257,47 @@
         自作ステージがありません。<a href="editor.html">ToyTank Maker</a> で作成してください。
       </div>
       <div id="custom-list"></div>
+    </section>
+
+    <!-- ===== Co-op マルチ（ロビー）===== -->
+    <section id="screen-coop" class="screen">
+      <button class="back" data-action="title">← タイトルへ戻る</button>
+      <h1>Co-op マルチ</h1>
+
+      <!-- A: 作る/入る の選択 -->
+      <div id="coop-choose" class="coop-panel">
+        <p class="muted-note">2人で協力プレイ。片方が「部屋を作る」→ 合言葉を相手に教えて「部屋に入る」。</p>
+        <div class="menu">
+          <button id="coop-create">部屋を作る（ホスト）</button>
+          <button id="coop-show-join">部屋に入る（合言葉を入力）</button>
+        </div>
+      </div>
+
+      <!-- B: ホストの待機（合言葉表示）-->
+      <div id="coop-host" class="coop-panel" style="display: none;">
+        <p class="muted-note">この合言葉を相手に伝えてください：</p>
+        <div id="coop-code">----</div>
+        <p id="coop-host-status" class="muted-note">相手を待っています…</p>
+        <button class="back" id="coop-cancel">← やめる</button>
+      </div>
+
+      <!-- C: ゲストの入室（合言葉入力）-->
+      <div id="coop-join" class="coop-panel" style="display: none;">
+        <p class="muted-note">合言葉（4文字）を入力：</p>
+        <input id="coop-code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="ABCD" />
+        <div class="menu">
+          <button id="coop-join-go">入る</button>
+          <button class="back" id="coop-join-back">← 戻る</button>
+        </div>
+        <p id="coop-join-status" class="muted-note"></p>
+      </div>
+
+      <!-- D: 接続OK（※実ゲーム開始は後続手順）-->
+      <div id="coop-ready" class="coop-panel" style="display: none;">
+        <p id="coop-ready-msg" class="coop-ok">2人そろいました！</p>
+        <p class="muted-note">※ 協力ゲーム本体は次の手順で実装します（今は接続確認まで）。</p>
+        <button class="back" data-action="title">← タイトルへ戻る</button>
+      </div>
     </section>
 
     <!-- ===== ゲーム ===== -->

@@ -292,10 +292,13 @@
         <p id="coop-join-status" class="muted-note"></p>
       </div>
 
-      <!-- D: 接続OK（※実ゲーム開始は後続手順）-->
+      <!-- D: 2人そろった → ホストは開始ボタン、ゲストは待機 -->
       <div id="coop-ready" class="coop-panel" style="display: none;">
-        <p id="coop-ready-msg" class="coop-ok">2人そろいました！</p>
-        <p class="muted-note">※ 協力ゲーム本体は次の手順で実装します（今は接続確認まで）。</p>
+        <p class="coop-ok">2人そろいました！</p>
+        <div class="menu">
+          <button id="coop-start" style="display: none;">ゲーム開始</button>
+        </div>
+        <p id="coop-wait" class="muted-note" style="display: none;">ホストの開始を待っています…</p>
         <button class="back" data-action="title">← タイトルへ戻る</button>
       </div>
     </section>

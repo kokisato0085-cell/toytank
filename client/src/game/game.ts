@@ -91,6 +91,10 @@ const HIT_DIST = TANK_RADIUS + BULLET_RADIUS; // 弾と戦車の命中距離
 const TUT_MOVE_DIST = 160; // 移動ステップ達成に必要な累積移動距離(px)（約2.5セル）
 const TUT_DONE_HOLD = 1.8; // 「チュートリアル完了！」を表示してからタイトルへ戻るまでの秒
 
+// Co-op（BasicDesign §12-c）の調整値。
+const SNAP_INTERVAL = 1 / 20; // ホストのスナップショット送信間隔（20Hz）
+const COOP_P2_OFFSET = 1.5; // P2 未設定ステージで P1 からずらす距離（セル）
+
 // 角度を [-PI, PI] に正規化する。
 function angleNorm(x: number): number {
   while (x > Math.PI) x -= 2 * Math.PI;
@@ -202,6 +206,20 @@ interface Player {
   alive: boolean; // Co-op: false=待機(観戦)。ソロは常に true
 }
 
+// ホスト→ゲストへ送る盤面スナップショット（BasicDesign §12-c）。JSONフル。
+export interface Snapshot {
+  t: "snapshot";
+  st: GameState; // ゲーム状態
+  label: string; // ステージ表示名
+  lives: number;
+  players: { id: number; x: number; y: number; h: number; f: number; alive: boolean }[];
+  enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
+  bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
+  mines: { x: number; y: number; mt: number }[];
+  marks: { x: number; y: number; c: string }[];
+  exps: { x: number; y: number; et: number; r: number; l: number; c?: string }[];
+}
+
 function makePlayer(id: number, spawn: { x: number; y: number }): Player {
   return {
     id,
@@ -217,6 +235,18 @@ function makePlayer(id: number, spawn: { x: number; y: number }): Player {
   };
 }
 
+// ゲスト側：スナップショットの敵情報から描画用の Enemy を復元する（sim用フィールドはダミー）。
+function guestEnemy(e: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }): Enemy {
+  return {
+    x: e.x, y: e.y, hx: e.x, hy: e.y, tx: e.x, ty: e.y,
+    type: getEnemyType(e.k), hp: e.hp, age: e.cl ? CLOAK_TIME + 1 : 0, cd: 0,
+    facing: e.f, bodyAngle: e.b, behavior: "combat", behaviorTimer: 0,
+    wdCol: -1, wdRow: -1, stuckCol: 0, stuckRow: 0, stuckTimer: 0,
+    mineCd: 0, fireStun: 0, burstLeft: 0, burstTimer: 0,
+    wpCol: -1, wpRow: -1, pathTimer: 0, moving: false,
+  };
+}
+
 export class Game {
   private ctx: CanvasRenderingContext2D;
   private scale = 1;
@@ -226,6 +256,10 @@ export class Game {
   private input: Input;
   private players: Player[] = []; // [0]=P1, [1]=P2(Co-op)。ローカル操作対象は localId。
   private localId = 0; // このクライアントが操作するプレイヤー（ホスト=0 / ゲスト=1）
+  // Co-op（BasicDesign §12）。null=ソロ/通常。host=権威でsim実行＋スナップショット送信。guest=描画専用。
+  coopRole: "host" | "guest" | null = null;
+  onSnapshot: ((snap: Snapshot) => void) | null = null; // host が送信に使う
+  private snapAcc = 0; // スナップショット送信レート制御
   private enemies: Enemy[];
   private bullets: Bullet[] = [];
   private mines: { x: number; y: number; t: number; owner: Enemy | null }[] = [];
@@ -402,9 +436,10 @@ export class Game {
 
   // 別ステージを読み込む（キャンペーンの次ステージ等）。resetLives で残機を初期化するか選ぶ。
   loadStage(stage: StageData, resetLives: boolean): void {
-    // チュートリアル状態は既定で解除（startTutorial はこの後に tutorial=true を立てる）。
+    // チュートリアル/Co-op 状態は既定で解除（start* はこの後にロールを立てる）。
     this.tutorial = false;
     this.tutDoneTimer = 0;
+    this.coopRole = null;
     this.spawn = cellCenter(stage, stage.players[0]);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);
@@ -471,6 +506,76 @@ export class Game {
         }
         break;
     }
+  }
+
+  // ===== Co-op（BasicDesign §12）=====
+  // 2人分の開始位置（P2 未設定ステージは P1 の隣に自動配置＝中12-e の保険）。
+  private coopSpawns(stage: StageData): [Player, Player] {
+    const s0 = cellCenter(stage, stage.players[0]);
+    const s1 = stage.players[1]
+      ? cellCenter(stage, stage.players[1])
+      : { x: s0.x + stage.grid.cell * COOP_P2_OFFSET, y: s0.y };
+    return [makePlayer(0, s0), makePlayer(1, s1)];
+  }
+
+  // ホストとして Co-op を開始（権威＝simを実行し、スナップショットを送る）。
+  startCoopHost(stage: StageData): void {
+    this.loadStage(stage, true); // 壁・敵・残機を初期化
+    this.coopRole = "host";
+    this.localId = 0;
+    this.players = this.coopSpawns(stage);
+    this.snapAcc = 0;
+    this.beginStage("Co-op");
+  }
+
+  // ゲストとして Co-op を開始（描画専用。simは回さず受信スナップショットを表示）。
+  startCoopGuest(stage: StageData): void {
+    this.loadStage(stage, true);
+    this.coopRole = "guest";
+    this.localId = 1;
+    this.players = this.coopSpawns(stage);
+    this.state = "playing"; // 表示状態はスナップショットで上書きされる
+  }
+
+  // 現在の盤面をスナップショットにまとめる（ホスト送信用）。
+  private buildSnapshot(): Snapshot {
+    return {
+      t: "snapshot",
+      st: this.state,
+      label: this.stageLabel,
+      lives: this.lives,
+      players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive })),
+      enemies: this.enemies.map((e) => ({
+        x: e.x, y: e.y, b: e.bodyAngle, f: e.facing, k: e.type.key, hp: e.hp,
+        cl: e.type.invisible && e.age >= CLOAK_TIME,
+      })),
+      bullets: this.bullets.map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, o: b.owner })),
+      mines: this.mines.map((m) => ({ x: m.x, y: m.y, mt: m.t })),
+      marks: this.deathMarks.map((d) => ({ x: d.x, y: d.y, c: d.color })),
+      exps: this.explosions.map((ex) => ({ x: ex.x, y: ex.y, et: ex.t, r: ex.maxR, l: ex.life, c: ex.color })),
+    };
+  }
+
+  // 受信スナップショットを描画用に反映する（ゲスト）。③-2a は最新を直接適用（補間なし）。
+  applySnapshot(snap: Snapshot): void {
+    if (this.coopRole !== "guest") return;
+    this.state = snap.st;
+    this.stageLabel = snap.label;
+    this.lives = snap.lives;
+    for (const ps of snap.players) {
+      const p = this.players[ps.id];
+      if (!p) continue;
+      p.pos.x = ps.x;
+      p.pos.y = ps.y;
+      p.heading = ps.h;
+      p.facing = ps.f;
+      p.alive = ps.alive;
+    }
+    this.enemies = snap.enemies.map(guestEnemy);
+    this.bullets = snap.bullets.map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, bounces: 0, owner: b.o, age: 1, group: 0 }));
+    this.mines = snap.mines.map((m) => ({ x: m.x, y: m.y, t: m.mt, owner: null }));
+    this.deathMarks = snap.marks.map((d) => ({ x: d.x, y: d.y, color: d.c }));
+    this.explosions = snap.exps.map((ex) => ({ x: ex.x, y: ex.y, t: ex.et, maxR: ex.r, life: ex.l, color: ex.c }));
   }
 
   // 残機を1回復（上限 MAX_LIVES）。回復できたら true。
@@ -604,6 +709,8 @@ export class Game {
 
     this.ageExplosions(dt); // 爆発エフェクトはどの状態でも進める（大破演出のため）
 
+    // ゲストは状態遷移をホストのスナップショットに任せる（ローカルでは進めない）。
+    if (this.coopRole !== "guest") {
     if (this.state === "dying") {
       // 大破演出 → 終わったらゲームオーバー or 区切りポーズ（自機復活）へ
       this.interTimer -= dt;
@@ -637,6 +744,7 @@ export class Game {
         }
       }
     }
+    }
 
     this.acc += dt;
     while (this.acc >= STEP) {
@@ -644,10 +752,25 @@ export class Game {
       this.acc -= STEP;
     }
     this.render();
+
+    // ホストは一定間隔で盤面スナップショットを送る（§12-c）。
+    if (this.coopRole === "host" && this.onSnapshot) {
+      this.snapAcc += dt;
+      if (this.snapAcc >= SNAP_INTERVAL) {
+        this.snapAcc -= SNAP_INTERVAL;
+        this.onSnapshot(this.buildSnapshot());
+      }
+    }
     requestAnimationFrame(this.loop);
   };
 
   private update(dt: number): void {
+    if (this.coopRole === "guest") {
+      // ゲストは描画専用＝simを回さない（盤面は applySnapshot で反映）。入力送信は③-3で追加。
+      this.input.takeFires();
+      this.input.takeMines();
+      return;
+    }
     if (this.state !== "playing") {
       // 開始前カウントダウン・ミス待機・クリア/GO中のクリックは無効化（再開と同時の暴発防止）
       this.input.takeFires();
@@ -1420,10 +1543,15 @@ export class Game {
       if (e.type.invisible && e.age >= CLOAK_TIME) continue; // 透明化中は描かない（轍・弾で推測）
       drawTank(ctx, e.x, e.y, e.type.color, e.bodyAngle, e.facing, this.er(e));
     }
-    this.drawAimLine(ctx);
-    // 大破演出中・ゲームオーバー後は自機を描かない（破壊された）
-    if (this.state !== "dying" && this.state !== "gameover") {
-      drawTank(ctx, this.pos.x, this.pos.y, COLORS.p1, this.heading, this.facing);
+    if (this.coopRole !== "guest") this.drawAimLine(ctx); // ゲストは相手の照準を描かない
+    // プレイヤー戦車（ソロ=1台 / Co-op=2台）。待機(alive=false)は描かない。
+    // ソロのみ：大破演出中/ゲームオーバー後は自機を隠す（破壊された＝従来挙動）。
+    // Co-op では state を共有するため localId 基準の隠しは使わず alive で判定する（②-3で死＝alive=false）。
+    const hideLocalDeath = this.coopRole === null && (this.state === "dying" || this.state === "gameover");
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      if (p.id === this.localId && hideLocalDeath) continue;
+      drawTank(ctx, p.pos.x, p.pos.y, p.id === 0 ? COLORS.p1 : COLORS.p2, p.heading, p.facing);
     }
     for (const b of this.bullets) {
       drawBullet(ctx, b.x, b.y, Math.atan2(b.vy, b.vx), b.owner === 0 ? COLORS.bulletP : COLORS.bulletE);

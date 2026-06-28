@@ -1,0 +1,17 @@
+# ToyTank 段階2 Co-op リレー（Cloudflare Workers + Durable Objects）
+# 本番: `wrangler deploy` → wss://toytank-relay.<account>.workers.dev/ws
+# 開発: `wrangler dev`     → ws://localhost:8787/ws
+name = "toytank-relay"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+# 部屋＝Durable Object。1部屋=1インスタンスで host/guest の2本のWebSocketを中継する。
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "RoomDO"
+
+# 無料プランで使えるよう SQLite バックエンドの DO として登録する（new_sqlite_classes）。
+# ※ストレージは使わない（純粋なリレー）が、無料枠の条件を満たすためこの宣言が必要。
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDO"]

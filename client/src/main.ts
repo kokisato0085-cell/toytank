@@ -5,7 +5,7 @@
 
 import { campaignStages } from "./game/campaignStages";
 import { tutorialStage } from "./game/tutorialStage";
-import { Game } from "./game/game";
+import { Game, type Snapshot } from "./game/game";
 import { RelayClient, type LobbyMsg } from "./net/relay";
 import { listSavedStages, loadSavedStage, saveCampaign } from "./game/stageStore";
 import {
@@ -389,7 +389,7 @@ function onCoopLobby(m: LobbyMsg): void {
     }
     case "joined": // ゲスト：入室成功（相手＝ホストは既にいる）
     case "peer-joined": // ホスト：相手が入った
-      coopPanel("ready"); // 2人そろった（実ゲーム開始は後続手順）
+      showCoopReady(); // 2人そろった → ホストは「ゲーム開始」、ゲストは待機
       break;
     case "peer-left":
       closeRelay();
@@ -406,9 +406,55 @@ function onCoopLobby(m: LobbyMsg): void {
   }
 }
 
+// 2人そろった画面：ホストは「ゲーム開始」、ゲストは待機表示。
+function showCoopReady(): void {
+  coopPanel("ready");
+  const isHost = relay?.role === "host";
+  const startBtn = document.getElementById("coop-start");
+  const wait = document.getElementById("coop-wait");
+  if (startBtn) startBtn.style.display = isHost ? "block" : "none";
+  if (wait) wait.style.display = isHost ? "none" : "block";
+}
+
+// ホスト/ゲスト共通の Co-op ゲーム開始。
+function startCoopGame(role: "host" | "guest", stage: StageData): void {
+  demoOff();
+  campaign = [stage];
+  campaignMode = false; // Co-op はキャンペーン進行に乗せない
+  idx = 0;
+  const g = bootGame(stage);
+  if (role === "host") {
+    g.onSnapshot = (snap) => relay?.send(snap); // 盤面を相手へ送る
+    g.startCoopHost(stage);
+  } else {
+    g.onSnapshot = null;
+    g.startCoopGuest(stage);
+  }
+  setStatus("Co-op プレイ中");
+  enterGame();
+}
+
+// ホストが「ゲーム開始」を押した：ステージを相手へ送り、両者でゲーム開始。
+function coopHostStart(): void {
+  const stage = campaignStages()[0]; // MVP：まず1面
+  relay?.send({ t: "start", stage });
+  startCoopGame("host", stage);
+}
+
+// 相手（ホスト）から届いたゲームメッセージ（開始通知・スナップショット）。
+function onCoopGameMessage(data: unknown): void {
+  const msg = data as { t?: string; stage?: StageData };
+  if (msg.t === "start" && msg.stage) {
+    startCoopGame("guest", msg.stage);
+  } else if (msg.t === "snapshot") {
+    game?.applySnapshot(data as Snapshot);
+  }
+}
+
 function newRelay(): RelayClient {
   const r = new RelayClient();
   r.onLobby = onCoopLobby;
+  r.onGameMessage = onCoopGameMessage;
   r.onError = () => {
     coopJoinStatus("リレーサーバーに接続できません（起動していない可能性）");
     coopPanel("join");
@@ -455,6 +501,7 @@ function coopJoinGo(): void {
   coopJoinStatus("接続中…");
   relay.connect("guest", code);
 }
+document.getElementById("coop-start")?.addEventListener("click", coopHostStart);
 document.getElementById("coop-join-go")?.addEventListener("click", coopJoinGo);
 document.getElementById("coop-code-input")?.addEventListener("keydown", (e) => {
   if ((e as KeyboardEvent).key === "Enter") coopJoinGo();

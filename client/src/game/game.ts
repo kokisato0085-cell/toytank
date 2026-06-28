@@ -188,6 +188,35 @@ function makeEnemies(stage: StageData): Enemy[] {
   });
 }
 
+// プレイヤー戦車1台分の状態（ソロ＝1台、Co-op＝2台。ホストが両方を同じロジックでsim）。
+interface Player {
+  id: number; // 弾の owner（0=P1, 1=P2）
+  pos: { x: number; y: number };
+  spawn: { x: number; y: number };
+  facing: number; // 砲塔の向き（描画）
+  heading: number; // 車体（キャタピラ）の向き＝移動方向
+  wasMoving: boolean; // 前フレーム動いていたか
+  fireStun: number; // 発射直後の停止残り(秒)
+  idleTime: number; // 動いていない経過秒（敵の角待ち検知）
+  trackFrom: { x: number; y: number }; // 直近のキャタピラ跡位置
+  alive: boolean; // Co-op: false=待機(観戦)。ソロは常に true
+}
+
+function makePlayer(id: number, spawn: { x: number; y: number }): Player {
+  return {
+    id,
+    pos: { ...spawn },
+    spawn: { ...spawn },
+    facing: -Math.PI / 2,
+    heading: -Math.PI / 2,
+    wasMoving: false,
+    fireStun: 0,
+    idleTime: 0,
+    trackFrom: { ...spawn },
+    alive: true,
+  };
+}
+
 export class Game {
   private ctx: CanvasRenderingContext2D;
   private scale = 1;
@@ -195,19 +224,14 @@ export class Game {
   private offsetY = 0;
   private dpr = 1; // devicePixelRatio（内部解像度＝論理サイズ×dpr で高精細化）
   private input: Input;
-  private spawn: { x: number; y: number };
-  private pos: { x: number; y: number };
+  private players: Player[] = []; // [0]=P1, [1]=P2(Co-op)。ローカル操作対象は localId。
+  private localId = 0; // このクライアントが操作するプレイヤー（ホスト=0 / ゲスト=1）
   private enemies: Enemy[];
   private bullets: Bullet[] = [];
   private mines: { x: number; y: number; t: number; owner: Enemy | null }[] = [];
   private explosions: { x: number; y: number; t: number; maxR: number; life: number; color?: string }[] = [];
   private blastR: number;
-  private facing = -Math.PI / 2; // 砲塔の向き（描画）
-  private heading = -Math.PI / 2; // 車体（キャタピラ）の向き＝移動方向
-  private wasMoving = false; // 前フレーム動いていたか（移動中の方向転換判定）
   private enemyMoving = false; // このフレーム、敵が1体でも移動したか（走行音用）
-  private playerIdleTime = 0; // 自機が動いていない経過秒（角待ち検知。一定で敵のスタンドオフ解除）
-  private fireStun = 0; // 発射直後の停止時間の残り(秒)
   private bulletGroup = 0; // 発射グループの採番（同一斉射＝同番号）
   private acc = 0;
   private last = 0;
@@ -222,7 +246,6 @@ export class Game {
   private kills: Record<string, number> = {}; // タイプ別の撃破数（リザルト用）
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
   private deathMarks: { x: number; y: number; color: string }[] = []; // 撃破バッテン印
-  private playerTrackFrom = { x: 0, y: 0 }; // 自機の直近の跡位置
   private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
   // 進行制御のコールバック（キャンペーン用）。クリア／ゲームオーバー遷移時に1回呼ぶ。
@@ -239,6 +262,57 @@ export class Game {
   private tutFinalEnemies: Enemy[] = []; // 仕上げで出す敵（ステップ4到達まで保留）
   private tutDoneTimer = 0; // 完了表示の残り秒（0で onTutorialDone）
 
+  // ローカル操作対象プレイヤー（ソロ=P1）への委譲アクセサ。
+  // 段階2リファクタで単一プレイヤー状態を players[] へ移行したが、呼び出し側はそのまま＝挙動不変。
+  private get pos(): { x: number; y: number } {
+    return this.players[this.localId].pos;
+  }
+  private set pos(v: { x: number; y: number }) {
+    this.players[this.localId].pos = v;
+  }
+  private get spawn(): { x: number; y: number } {
+    return this.players[this.localId].spawn;
+  }
+  private set spawn(v: { x: number; y: number }) {
+    this.players[this.localId].spawn = v;
+  }
+  private get facing(): number {
+    return this.players[this.localId].facing;
+  }
+  private set facing(v: number) {
+    this.players[this.localId].facing = v;
+  }
+  private get heading(): number {
+    return this.players[this.localId].heading;
+  }
+  private set heading(v: number) {
+    this.players[this.localId].heading = v;
+  }
+  private get wasMoving(): boolean {
+    return this.players[this.localId].wasMoving;
+  }
+  private set wasMoving(v: boolean) {
+    this.players[this.localId].wasMoving = v;
+  }
+  private get fireStun(): number {
+    return this.players[this.localId].fireStun;
+  }
+  private set fireStun(v: number) {
+    this.players[this.localId].fireStun = v;
+  }
+  private get playerIdleTime(): number {
+    return this.players[this.localId].idleTime;
+  }
+  private set playerIdleTime(v: number) {
+    this.players[this.localId].idleTime = v;
+  }
+  private get playerTrackFrom(): { x: number; y: number } {
+    return this.players[this.localId].trackFrom;
+  }
+  private set playerTrackFrom(v: { x: number; y: number }) {
+    this.players[this.localId].trackFrom = v;
+  }
+
   constructor(private canvas: HTMLCanvasElement, private stage: StageData) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D コンテキストを取得できません");
@@ -250,9 +324,7 @@ export class Game {
     window.addEventListener("orientationchange", refit);
     document.addEventListener("fullscreenchange", refit);
     this.input = new Input(canvas);
-    this.spawn = cellCenter(stage, stage.players[0]);
-    this.pos = { ...this.spawn };
-    this.playerTrackFrom = { ...this.spawn };
+    this.players = [makePlayer(0, cellCenter(stage, stage.players[0]))];
     this.enemies = makeEnemies(stage);
     this.blastR = MINE_BLAST_CELLS * stage.grid.cell;
     this.initialTiles = stage.tiles.map((row) => [...row]);

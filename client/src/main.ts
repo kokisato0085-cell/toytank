@@ -6,6 +6,7 @@
 import { campaignStages } from "./game/campaignStages";
 import { tutorialStage } from "./game/tutorialStage";
 import { Game } from "./game/game";
+import { RelayClient, type LobbyMsg } from "./net/relay";
 import { listSavedStages, loadSavedStage, saveCampaign } from "./game/stageStore";
 import {
   getVolume,
@@ -21,7 +22,7 @@ import {
 import type { StageData } from "./stage/types";
 
 // ---- 画面切替 ----
-type ScreenId = "title" | "settings" | "custom" | "game";
+type ScreenId = "title" | "settings" | "custom" | "coop" | "game";
 function showScreen(id: ScreenId): void {
   for (const el of document.querySelectorAll<HTMLElement>(".screen")) {
     el.classList.toggle("active", el.id === `screen-${id}`);
@@ -161,6 +162,7 @@ function backToTitle(): void {
   hideResult();
   setGearOpen(false);
   setTutorialUi(false); // チュートリアルのスキップボタンを隠す
+  closeRelay(); // Co-op を抜ける＝切断
   setImmersive(false);
   void exitFullscreen();
   showScreen("title");
@@ -277,6 +279,9 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-action]")) {
         showScreen("custom");
         updateGameActive();
         break;
+      case "coop":
+        openCoop();
+        break;
       case "settings":
         game?.pause();
         demoOff();
@@ -334,6 +339,126 @@ document.getElementById("btn-mine")?.addEventListener("click", () => game?.layMi
 // チュートリアルのスキップ（⚙設定タブ／⚙ギアメニューの中。tutorial-active の時だけ表示）
 document.getElementById("pc-skip")?.addEventListener("click", () => backToTitle());
 document.getElementById("gear-skip")?.addEventListener("click", () => backToTitle());
+
+// ---- Co-op マルチ（ロビー。BasicDesign §12-b）----
+let relay: RelayClient | null = null;
+
+// ロビー画面のパネル（選択／ホスト待機／ゲスト入室／接続OK）を出し分ける。
+function coopPanel(id: "choose" | "host" | "join" | "ready"): void {
+  for (const p of ["choose", "host", "join", "ready"] as const) {
+    const el = document.getElementById(`coop-${p}`);
+    if (el) el.style.display = p === id ? "block" : "none";
+  }
+}
+
+function closeRelay(): void {
+  relay?.close();
+  relay = null;
+}
+
+// Co-op 画面を開く。prefillCode があれば入室パネルに合言葉を入れた状態にする（?room= 用）。
+function openCoop(prefillCode?: string): void {
+  game?.pause();
+  demoOff();
+  closeRelay();
+  showScreen("coop");
+  const status = document.getElementById("coop-join-status");
+  if (status) status.textContent = "";
+  if (prefillCode) {
+    coopPanel("join");
+    const inp = document.getElementById("coop-code-input") as HTMLInputElement | null;
+    if (inp) inp.value = prefillCode.toUpperCase().slice(0, 4);
+  } else {
+    coopPanel("choose");
+  }
+  updateGameActive();
+}
+
+function coopJoinStatus(msg: string): void {
+  const s = document.getElementById("coop-join-status");
+  if (s) s.textContent = msg;
+}
+
+function onCoopLobby(m: LobbyMsg): void {
+  switch (m.t) {
+    case "created": {
+      const el = document.getElementById("coop-code");
+      if (el) el.textContent = m.code;
+      coopPanel("host");
+      break;
+    }
+    case "joined": // ゲスト：入室成功（相手＝ホストは既にいる）
+    case "peer-joined": // ホスト：相手が入った
+      coopPanel("ready"); // 2人そろった（実ゲーム開始は後続手順）
+      break;
+    case "peer-left":
+      closeRelay();
+      alert("相手の接続が切れました");
+      backToTitle();
+      break;
+    case "error":
+      if (m.reason === "notfound") coopJoinStatus("その合言葉の部屋が見つかりません");
+      else if (m.reason === "full") coopJoinStatus("満室です（すでに2人います）");
+      else coopJoinStatus("接続エラー");
+      coopPanel("join");
+      closeRelay();
+      break;
+  }
+}
+
+function newRelay(): RelayClient {
+  const r = new RelayClient();
+  r.onLobby = onCoopLobby;
+  r.onError = () => {
+    coopJoinStatus("リレーサーバーに接続できません（起動していない可能性）");
+    coopPanel("join");
+    closeRelay();
+  };
+  r.onClose = () => {
+    // 予期せぬ切断（peer-left は上で処理済み＝こちらからclose済みなので来ない）
+    if (!onGameScreen()) coopJoinStatus("接続が切れました");
+    relay = null;
+  };
+  return r;
+}
+
+document.getElementById("coop-create")?.addEventListener("click", () => {
+  closeRelay();
+  relay = newRelay();
+  const el = document.getElementById("coop-code");
+  if (el) el.textContent = "····";
+  coopPanel("host");
+  relay.connect("host");
+});
+document.getElementById("coop-show-join")?.addEventListener("click", () => {
+  coopJoinStatus("");
+  coopPanel("join");
+});
+document.getElementById("coop-cancel")?.addEventListener("click", () => {
+  closeRelay();
+  coopPanel("choose");
+});
+document.getElementById("coop-join-back")?.addEventListener("click", () => {
+  closeRelay();
+  coopJoinStatus("");
+  coopPanel("choose");
+});
+function coopJoinGo(): void {
+  const inp = document.getElementById("coop-code-input") as HTMLInputElement | null;
+  const code = (inp?.value ?? "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{4}$/.test(code)) {
+    coopJoinStatus("4文字の合言葉を入力してください");
+    return;
+  }
+  closeRelay();
+  relay = newRelay();
+  coopJoinStatus("接続中…");
+  relay.connect("guest", code);
+}
+document.getElementById("coop-join-go")?.addEventListener("click", coopJoinGo);
+document.getElementById("coop-code-input")?.addEventListener("keydown", (e) => {
+  if ((e as KeyboardEvent).key === "Enter") coopJoinGo();
+});
 
 const muteBtn = document.getElementById("btn-mute");
 function syncGameMuteBtn(): void {
@@ -471,6 +596,12 @@ initDemo();
 showScreen("title"); // 起動時はタイトル
 demoOn();
 updateGameActive(); // 起動時に縦持ちなら回転案内（ホームも横画面に統一）
+
+// 共有URL（?room=ABCD）で開いたら Co-op の入室画面を合言葉入り表示にする。
+{
+  const room = new URLSearchParams(location.search).get("room");
+  if (room) openCoop(room);
+}
 
 // 開発用ショートカット（localhost のみ）。
 if (import.meta.env.DEV) {

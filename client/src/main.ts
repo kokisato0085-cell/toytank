@@ -425,9 +425,11 @@ function startCoopGame(role: "host" | "guest", stage: StageData): void {
   const g = bootGame(stage);
   if (role === "host") {
     g.onSnapshot = (snap) => relay?.send(snap); // 盤面を相手へ送る
+    g.onInput = null;
     g.startCoopHost(stage);
   } else {
     g.onSnapshot = null;
+    g.onInput = (msg) => relay?.send(msg); // 自分の操作をホストへ送る
     g.startCoopGuest(stage);
   }
   setStatus("Co-op プレイ中");
@@ -445,9 +447,11 @@ function coopHostStart(): void {
 function onCoopGameMessage(data: unknown): void {
   const msg = data as { t?: string; stage?: StageData };
   if (msg.t === "start" && msg.stage) {
-    startCoopGame("guest", msg.stage);
+    startCoopGame("guest", msg.stage); // ゲスト：ホストの開始通知でステージを読み込む
   } else if (msg.t === "snapshot") {
-    game?.applySnapshot(data as Snapshot);
+    game?.applySnapshot(data as Snapshot); // ゲスト：盤面を受信
+  } else if (msg.t === "input") {
+    game?.applyRemoteInput(data as { ax: number; ay: number; aim: [number, number] | null }); // ホスト：ゲストの操作を受信
   }
 }
 

@@ -299,6 +299,7 @@ export class Game {
   private state: GameState = "playing";
   private interTimer = 0; // 区切りポーズ／開始画面／大破演出の残り秒
   private pendingGameOver = false; // 大破演出のあとゲームオーバーへ進むか
+  private coopWiping = false; // Co-op：全滅演出のあとステージを最初からやり直すか
   private stageLabel = ""; // 「ステージN」表示用
   private introHealed = false; // 直近の開始画面で「残機+1回復」を表示するか
   clearGrantsLife = false; // このステージをクリアすると残機+1か（main.tsが面ごとに設定）
@@ -527,6 +528,7 @@ export class Game {
     this.remoteInput = { axis: { x: 0, y: 0 }, aim: null };
     this.remoteFires = [];
     this.remoteMines = 0;
+    this.coopWiping = false;
     this.beginStage("Co-op");
   }
 
@@ -892,7 +894,13 @@ export class Game {
       // 大破演出 → 終わったらゲームオーバー or 区切りポーズ（自機復活）へ
       this.interTimer -= dt;
       if (this.interTimer <= 0) {
-        if (this.pendingGameOver) {
+        if (this.coopWiping) {
+          // Co-op 全滅 → ステージを最初からやり直し（2人とも復活・敵/壁リセット）
+          this.coopWiping = false;
+          this.resetStage();
+          startBgm(0.2);
+          this.beginStage("Co-op");
+        } else if (this.pendingGameOver) {
           this.state = "gameover";
           playSound("gameover", { volume: 0.7 }); // ゲームオーバー音
           this.onGameOver?.();
@@ -975,8 +983,9 @@ export class Game {
     const localInput: PlayerInput = this.demo
       ? { axis: this.demoAxis(dt), aim: this.demoAimDir() }
       : { axis: this.input.axis(), aim: this.playerAimDir() };
-    this.movePlayer(this.players[this.localId], localInput, dt);
-    if (this.coopRole === "host" && this.players[1]) {
+    const localPlayer = this.players[this.localId];
+    if (localPlayer.alive) this.movePlayer(localPlayer, localInput, dt);
+    if (this.coopRole === "host" && this.players[1]?.alive) {
       this.movePlayer(this.players[1], this.remoteInput, dt); // P2＝ゲストの入力で駆動
     }
 
@@ -986,6 +995,7 @@ export class Game {
     } else {
       const me = this.players[this.localId];
       for (const f of this.input.takeFires()) {
+        if (!me.alive) continue; // 死亡中(待機)は撃たない（入力は消費）
         if (this.countPlayerBullets(me.id) >= MAX_ACTIVE_BULLETS) break;
         const fallback = { x: Math.cos(me.facing), y: Math.sin(me.facing) };
         const dir = f.cursor ? (this.playerAimDir() ?? fallback) : (f.dir ?? fallback);
@@ -995,7 +1005,7 @@ export class Game {
       }
     }
     // Co-op ホスト：ゲスト(P2)の発射・地雷を反映（FF=ON）。
-    if (this.coopRole === "host" && this.players[1]) {
+    if (this.coopRole === "host" && this.players[1]?.alive) {
       const p2 = this.players[1];
       for (const d of this.remoteFires) {
         if (this.countPlayerBullets(p2.id) >= MAX_ACTIVE_BULLETS) break;
@@ -1032,11 +1042,19 @@ export class Game {
         }
         continue; // 弾は消費（FF：所有者を問わず当たる）
       }
-      // 自機への命中（自爆猶予経過後、または他者の弾）
-      if ((b.owner !== 0 || b.age >= SELF_GRACE) && this.near(b.x, b.y, this.pos.x, this.pos.y)) {
-        if (this.tutorial) continue; // チュートリアルは無敵：弾を消すだけ（死なない）
-        this.onPlayerDeath();
-        return;
+      // プレイヤーへの命中（自機は自爆猶予経過後・他者の弾はFFで常に当たる）。生存プレイヤーを走査。
+      let hitPlayer: Player | null = null;
+      for (const p of this.players) {
+        if (!p.alive) continue;
+        if ((b.owner !== p.id || b.age >= SELF_GRACE) && this.near(b.x, b.y, p.pos.x, p.pos.y)) {
+          hitPlayer = p;
+          break;
+        }
+      }
+      if (hitPlayer) {
+        this.onHitPlayer(hitPlayer);
+        if (this.state !== "playing") return; // ソロ死亡/全滅で状態が変わったら以降の弾処理を中断
+        continue; // 弾を消費（無敵or相方生存で継続）
       }
       // 地雷への命中 → その地雷を即起爆（弾は消費）
       const mi = this.mines.findIndex((m) => this.dist(b.x, b.y, m.x, m.y) < MINE_RADIUS + BULLET_RADIUS);
@@ -1124,7 +1142,7 @@ export class Game {
   private detonate(seed: number[]): void {
     const det = new Set<number>(seed);
     const queue = [...seed];
-    let playerHit = false;
+    const hitPlayers = new Set<Player>(); // 爆風に巻き込まれた生存プレイヤー
     while (queue.length) {
       const m = this.mines[queue.pop()!];
       this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
@@ -1133,7 +1151,9 @@ export class Game {
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
       //    爆風内なら設置者本人も巻き込む（置いた直後に弾で起爆して無傷になる“ガード”悪用を防止）
-      if (this.inBlast(m.x, m.y, this.pos.x, this.pos.y)) playerHit = true;
+      for (const p of this.players) {
+        if (p.alive && this.inBlast(m.x, m.y, p.pos.x, p.pos.y)) hitPlayers.add(p);
+      }
       this.enemies = this.enemies.filter((e) => {
         if (this.inBlast(m.x, m.y, e.x, e.y)) {
           e.hp--;
@@ -1164,7 +1184,7 @@ export class Game {
       if (this.tutorial && bricks.length) this.tutBrickBroken = true; // 地雷ステップの達成
     }
     this.mines = this.mines.filter((_, j) => !det.has(j));
-    if (playerHit && !this.tutorial) this.onPlayerDeath(); // チュートリアルは無敵
+    for (const p of hitPlayers) this.onHitPlayer(p); // 巻き込まれたプレイヤーを処理（チュートリアルは無敵）
   }
 
   // 爆心(mx,my)から(tx,ty)が爆風範囲内かつ壁に遮られていないか。
@@ -1599,6 +1619,37 @@ export class Game {
     }
   }
 
+  // プレイヤー p が被弾したときの処理。ソロ＝従来の残機/リスポーン、Co-op＝待機（全滅でやり直し）。
+  private onHitPlayer(p: Player): void {
+    if (this.tutorial) return; // チュートリアルは無敵
+    if (this.coopRole === "host") this.killPlayer(p);
+    else this.onPlayerDeath(); // ソロ（p は必ず P1）
+  }
+
+  // Co-op：p を待機（観戦）にする。全員やられたら全滅演出→やり直しへ。
+  private killPlayer(p: Player): void {
+    if (!p.alive) return;
+    p.alive = false;
+    this.spawnDeathFx(p.pos.x, p.pos.y);
+    this.deathMarks.push({ x: p.pos.x, y: p.pos.y, color: p.id === 0 ? COLORS.p1 : COLORS.p2 });
+    playSound("explosion", { volume: 0.6, throttleMs: 60 });
+    if (this.players.some((q) => q.alive)) {
+      playSound("miss", { volume: 0.7 }); // 相方は生存＝ミス音
+    } else {
+      this.coopWipe(); // 全滅
+    }
+  }
+
+  // Co-op：全滅演出に入り、DEATH_FX 後にステージを最初からやり直す（loop で処理）。
+  private coopWipe(): void {
+    stopBgm();
+    playSound("gameover", { volume: 0.7 });
+    this.coopWiping = true;
+    this.pendingGameOver = false;
+    this.state = "dying";
+    this.interTimer = DEATH_FX;
+  }
+
   private onPlayerDeath(): void {
     this.lives--;
     this.spawnDeathFx(this.pos.x, this.pos.y); // 自機が大破する演出
@@ -1739,7 +1790,8 @@ export class Game {
       if (e.type.invisible && e.age >= CLOAK_TIME) continue; // 透明化中は描かない（轍・弾で推測）
       drawTank(ctx, e.x, e.y, e.type.color, e.bodyAngle, e.facing, this.er(e));
     }
-    if (this.coopRole !== "guest") this.drawAimLine(ctx); // ゲストは相手の照準を描かない
+    // 照準線はローカル機が生存中のみ（ゲストは相手の照準を描かない／死亡=待機中は消す）
+    if (this.coopRole !== "guest" && this.players[this.localId].alive) this.drawAimLine(ctx);
     // プレイヤー戦車（ソロ=1台 / Co-op=2台）。待機(alive=false)は描かない。
     // ソロのみ：大破演出中/ゲームオーバー後は自機を隠す（破壊された＝従来挙動）。
     // Co-op では state を共有するため localId 基準の隠しは使わず alive で判定する（②-3で死＝alive=false）。
@@ -1758,7 +1810,8 @@ export class Game {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     if (!this.demo) {
       // デモ（タイトル背景）では操作系・HUD・各種ポップアップを描かない
-      this.input.drawSticks(ctx);
+      // 操作UI（PCカーソル/スティック）はローカル機が生存中のみ（死亡=待機中は消す）
+      if (this.players[this.localId].alive) this.input.drawSticks(ctx);
       this.drawHud(ctx);
     }
   }
@@ -1782,11 +1835,20 @@ export class Game {
     const iy = 22 + oy;
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
-    drawTankIcon(ctx, left + 20, iy, COLORS.p1);
-    ctx.font = "bold 18px sans-serif";
-    this.hudText(ctx, `× ${this.lives}`, left + 38, iy);
+    let enemyX: number;
+    if (this.coopRole) {
+      // Co-op：残機ではなく P1/P2 の生存表示。やられた側はアイコンを消す。
+      if (this.players[0]?.alive) drawTankIcon(ctx, left + 20, iy, COLORS.p1);
+      if (this.players[1]?.alive) drawTankIcon(ctx, left + 44, iy, COLORS.p2);
+      enemyX = left + 66;
+    } else {
+      drawTankIcon(ctx, left + 20, iy, COLORS.p1);
+      ctx.font = "bold 18px sans-serif";
+      this.hudText(ctx, `× ${this.lives}`, left + 38, iy);
+      enemyX = left + 92;
+    }
     ctx.font = "bold 14px sans-serif";
-    this.hudText(ctx, `敵 ${this.enemies.length}`, left + 92, iy);
+    this.hudText(ctx, `敵 ${this.enemies.length}`, enemyX, iy);
     if (this.stageLabel) {
       if (this.immersive) {
         // 没入：右上はギアがあるので、敵数の右隣（左寄せ）に置く

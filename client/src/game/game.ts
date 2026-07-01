@@ -10,7 +10,7 @@ import { circleHitsSolid, isSolidCell, isWallCell, slide, stepReflect, type RayS
 import { advanceBullet, bulletsCollide, type Bullet } from "./bullet";
 import { blastReaches, computeAimDir, friendlyBlocksPath, lineClear } from "./ai";
 import { nextStepToward } from "./pathfind";
-import { playSound, setLoop, startBgm, stopBgm } from "./sound";
+import { playSound, setLoop, startBgm, stopBgm, type SoundName } from "./sound";
 import { Input } from "./input";
 import {
   BEHAVIOR_MAX,
@@ -231,6 +231,7 @@ export interface Snapshot {
   fk: number[]; // プレイヤーIDごとの味方撃破数（誤射）
   ka: number[]; // プレイヤーIDごとの「味方に倒された」数
   nt: string; // 撃破メッセージ（味方の攻撃/自爆。空=非表示）
+  sfx: { n: string; v: number }[]; // この間隔に鳴った効果音（ゲストが受信時に再生）
   players: { id: number; x: number; y: number; h: number; f: number; alive: boolean; n: string }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
   bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
@@ -284,6 +285,7 @@ export class Game {
   // Co-op（BasicDesign §12）。null=ソロ/通常。host=権威でsim実行＋スナップショット送信。guest=描画専用。
   coopRole: "host" | "guest" | null = null;
   private guestBgm = false; // ゲスト：BGMが鳴っているか（状態に追従して止め/再開する）
+  private sfxQueue: { n: string; v: number }[] = []; // host：この間隔に鳴った効果音（スナップショットでゲストへ配る）
   onSnapshot: ((snap: Snapshot) => void) | null = null; // host が送信に使う
   private snapAcc = 0; // スナップショット送信レート制御
   private snapBuf: { time: number; snap: Snapshot }[] = []; // ゲストの受信バッファ（補間用）
@@ -514,7 +516,7 @@ export class Game {
       case 4: // 仕上げ（敵を撃破）
         if (this.enemies.length === 0) {
           this.tutDoneTimer = TUT_DONE_HOLD;
-          playSound("clear", { volume: 0.7 });
+          this.sfx("clear", { volume: 0.7 });
         }
         break;
     }
@@ -541,6 +543,7 @@ export class Game {
     this.remoteFires = [];
     this.remoteMines = 0;
     this.pendingGameOver = false;
+    this.sfxQueue = [];
     this.beginStage("Co-op");
   }
 
@@ -569,6 +572,8 @@ export class Game {
       fk: this.friendlyKills,
       ka: this.killedByAlly,
       nt: this.notice,
+      sfx: this.sfxQueue.splice(0), // 溜まった効果音を送って空にする
+
       players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive, n: this.playerName(p.id) })),
       enemies: this.enemies.map((e) => ({
         x: e.x, y: e.y, b: e.bodyAngle, f: e.facing, k: e.type.key, hp: e.hp,
@@ -585,6 +590,8 @@ export class Game {
   applySnapshot(snap: Snapshot): void {
     if (this.coopRole !== "guest") return;
     this.snapBuf.push({ time: performance.now(), snap });
+    // 効果音は「受信した時に一度だけ」鳴らす（補間フレームごとの重複を避ける）。
+    if (snap.sfx) for (const s of snap.sfx) playSound(s.n as SoundName, { volume: s.v, throttleMs: 40 });
     // 古いものは捨てる（補間に使う直近2枚＋余裕があれば十分）。
     const cutoff = performance.now() - 1000;
     while (this.snapBuf.length > 2 && this.snapBuf[0].time < cutoff) this.snapBuf.shift();
@@ -937,7 +944,7 @@ export class Game {
       if (this.interTimer <= 0) {
         if (this.pendingGameOver) {
           this.state = "gameover"; // ソロ=残機ゼロ / Co-op=全滅 → リザルトへ
-          playSound(this.coopRole ? "coop_gameover" : "gameover", { volume: 0.7 }); // Co-opは専用音
+          this.sfx(this.coopRole ? "coop_gameover" : "gameover", { volume: 0.7 }); // Co-opは専用音
           this.onGameOver?.();
         } else {
           this.respawnPlayer(); // 自機だけ復活（敵・壁は維持）
@@ -1073,7 +1080,7 @@ export class Game {
         this.explosions.push({ x: b.x, y: b.y, t: 0, maxR: BULLET_RADIUS * 2, life: EXPLOSION_LIFE });
         continue;
       }
-      if (b.bounces < prevBounces) playSound("bounce", { volume: 0.4, throttleMs: 50 }); // 跳弾音（先頭無音は自動スキップ）
+      if (b.bounces < prevBounces) this.sfx("bounce", { volume: 0.4, throttleMs: 50 }); // 跳弾音（先頭無音は自動スキップ）
       const ei = this.enemies.findIndex((e) => this.dist(b.x, b.y, e.x, e.y) < this.er(e) + BULLET_RADIUS);
       if (ei >= 0) {
         const en = this.enemies[ei];
@@ -1142,7 +1149,7 @@ export class Game {
     // クリア判定（敵を全滅）。ただし同フレームに自機が大破（dying等）した場合はクリアより死亡を優先する
     // （例：1つの爆発で自機と最後の敵が同時に倒れたケース。state が dying に変わっているので素通りさせない）。
     if (this.state === "playing" && !this.tutorial && this.enemies.length === 0) {
-      playSound("clear", { volume: 0.7 }); // ステージクリア音
+      this.sfx("clear", { volume: 0.7 }); // ステージクリア音
       if (this.onStageClear) {
         // キャンペーン：ステージ背景を残したままクリアポップアップ → 待機後に次へ（loopで処理）
         this.state = "stageclear";
@@ -1170,7 +1177,7 @@ export class Game {
   private layMineFrom(p: Player): void {
     if (this.mines.filter((m) => m.owner === null).length >= MAX_MINES) return;
     this.mines.push({ x: p.pos.x, y: p.pos.y, t: 0, owner: null, by: p.id });
-    playSound("mine", { volume: 0.5 }); // 地雷設置音
+    this.sfx("mine", { volume: 0.5 }); // 地雷設置音
   }
 
   private updateMines(dt: number): void {
@@ -1190,7 +1197,7 @@ export class Game {
     while (queue.length) {
       const m = this.mines[queue.pop()!];
       this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
-      playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 地雷爆発音（連鎖は間引き）
+      this.sfx("explosion", { volume: 0.6, throttleMs: 60 }); // 地雷爆発音（連鎖は間引き）
       // 1) 壊すブロックを「破壊前のタイル」で確定（手前の壁が奥を守る＝貫通させない）
       const bricks = this.collectBlastBricks(m.x, m.y);
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
@@ -1326,7 +1333,7 @@ export class Game {
     }
     this.spawnDeathFx(e.x, e.y); // 敵も大破演出
     this.deathMarks.push({ x: e.x, y: e.y, color: "#ffffff" });
-    playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 戦車大破音（爆発と同じ）
+    this.sfx("explosion", { volume: 0.6, throttleMs: 60 }); // 戦車大破音（爆発と同じ）
   }
 
   // 指定プレイヤーが dir 方向へ発射（owner=そのプレイヤーID）。ソロ/ホスト共通。
@@ -1358,7 +1365,7 @@ export class Game {
       age: 0,
       group: this.bulletGroup,
     });
-    playSound("shot", { volume: 0.15, throttleMs: 45 }); // 発射音（音量控えめ・同時多発は間引き）
+    this.sfx("shot", { volume: 0.15, throttleMs: 45 }); // 発射音（音量控えめ・同時多発は間引き）
   }
 
   // 行動軸をタイプの性格に応じた重みで切り替える。
@@ -1667,7 +1674,7 @@ export class Game {
         if (e.mineCd <= 0) {
           if (this.mines.filter((m) => m.owner === e).length < t.maxMines) {
             this.mines.push({ x: e.x, y: e.y, t: 0, owner: e, by: -1 });
-            playSound("mine", { volume: 0.35, throttleMs: 120 }); // 敵の地雷設置音（控えめ）
+            this.sfx("mine", { volume: 0.35, throttleMs: 120 }); // 敵の地雷設置音（控えめ）
             e.mineCd = ENEMY_MINE_INTERVAL;
           } else {
             e.mineCd = 1.0; // 満杯なら少し待つ
@@ -1691,7 +1698,7 @@ export class Game {
     p.alive = false;
     this.spawnDeathFx(p.pos.x, p.pos.y);
     this.deathMarks.push({ x: p.pos.x, y: p.pos.y, color: p.id === 0 ? COLORS.p1 : COLORS.p2 });
-    playSound("explosion", { volume: 0.6, throttleMs: 60 });
+    this.sfx("explosion", { volume: 0.6, throttleMs: 60 });
     // 撃破メッセージ（§12-i）：味方の攻撃なら「〇〇に倒された」、自分の地雷なら「自爆」。敵は通知しない。
     if (killerId >= 0 && killerId !== p.id) {
       this.setNotice(`${this.playerName(p.id)} は ${this.playerName(killerId)} に倒された`);
@@ -1709,6 +1716,12 @@ export class Game {
   private setNotice(text: string): void {
     this.notice = text;
     this.noticeT = NOTICE_DUR;
+  }
+
+  // 効果音を鳴らす。ローカル再生に加え、ホストなら「鳴った音」をキューに記録してゲストへ配る。
+  private sfx(name: SoundName, opts?: { volume?: number; throttleMs?: number }): void {
+    playSound(name, opts);
+    if (this.coopRole === "host") this.sfxQueue.push({ n: name, v: opts?.volume ?? 1 });
   }
 
   // Co-op：全滅演出に入り、DEATH_FX 後にリザルト（ゲームオーバー）へ（loop で処理・§12-j）。
@@ -1732,8 +1745,8 @@ export class Game {
   private onPlayerDeath(): void {
     this.lives--;
     this.spawnDeathFx(this.pos.x, this.pos.y); // 自機が大破する演出
-    playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 自機の大破音（戦車大破＝爆発と共用）
-    if (this.lives > 0) playSound("miss", { volume: 0.7 }); // 被弾ミス音（残機が尽きる死＝ゲームオーバーでは鳴らさない）
+    this.sfx("explosion", { volume: 0.6, throttleMs: 60 }); // 自機の大破音（戦車大破＝爆発と共用）
+    if (this.lives > 0) this.sfx("miss", { volume: 0.7 }); // 被弾ミス音（残機が尽きる死＝ゲームオーバーでは鳴らさない）
     stopBgm(); // 被弾でBGM停止（復活時に頭から再開）
     this.pendingGameOver = this.lives <= 0;
     this.state = "dying"; // 演出 → loop で gameover or respawning へ

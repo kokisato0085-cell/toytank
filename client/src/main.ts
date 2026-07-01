@@ -552,6 +552,13 @@ muteBtn?.addEventListener("click", () => {
 
 function restart(): void {
   if (!game) return;
+  if (game.coopRole === "guest") return; // Co-op のゲストはホストの操作に従う（自分では再開しない）
+  if (game.coopRole === "host") {
+    hideResult();
+    game.restartCoop(campaign[0]); // 全滅リザルト→もう一度：同ステージを最初から（統計もリセット）
+    updateGameActive();
+    return;
+  }
   if (game.tutorial) {
     startTutorial(); // チュートリアル中のリスタートは最初からやり直す
     return;

@@ -935,7 +935,7 @@ export class Game {
       if (this.interTimer <= 0) {
         if (this.pendingGameOver) {
           this.state = "gameover"; // ソロ=残機ゼロ / Co-op=全滅 → リザルトへ
-          playSound("gameover", { volume: 0.7 }); // ゲームオーバー音
+          playSound(this.coopRole ? "coop_gameover" : "gameover", { volume: 0.7 }); // Co-opは専用音
           this.onGameOver?.();
         } else {
           this.respawnPlayer(); // 自機だけ復活（敵・壁は維持）
@@ -1689,9 +1689,8 @@ export class Game {
     } else if (killerId === p.id) {
       this.setNotice(`${this.playerName(p.id)} は自爆した`);
     }
-    if (this.players.some((q) => q.alive)) {
-      playSound("miss", { volume: 0.7 }); // 相方は生存＝ミス音
-    } else {
+    // プレイヤー撃破の音は爆破音のみ（ミス音は鳴らさない）。全滅なら全滅演出へ。
+    if (!this.players.some((q) => q.alive)) {
       this.coopWipe(); // 全滅
     }
   }

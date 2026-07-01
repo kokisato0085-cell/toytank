@@ -97,6 +97,7 @@ const COOP_P2_OFFSET = 1.5; // P2 未設定ステージで P1 からずらす距
 const INTERP_DELAY = 0.1; // ゲストの補間遅延（秒）＝この分だけ過去を描いて間を埋める（小12-3）
 const INPUT_INTERVAL = 1 / 30; // ゲストの入力送信間隔（30Hz・小12-2）
 const OWNER_ENEMY = -1; // 弾の所有者：0..=プレイヤーID、-1=敵
+const NOTICE_DUR = 3; // 撃破メッセージの表示秒（§12-i）
 
 // 線形補間。
 function lerp(a: number, b: number, t: number): number {
@@ -227,6 +228,7 @@ export interface Snapshot {
   lives: number;
   tg: number; // 轍リセット世代番号（変わったらゲストは轍をクリア）
   kills: Record<string, number>[]; // プレイヤーIDごとの撃破数（各自が自分の分を表示）
+  nt: string; // 撃破メッセージ（味方の攻撃/自爆。空=非表示）
   players: { id: number; x: number; y: number; h: number; f: number; alive: boolean; n: string }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
   bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
@@ -283,6 +285,8 @@ export class Game {
   private snapAcc = 0; // スナップショット送信レート制御
   private snapBuf: { time: number; snap: Snapshot }[] = []; // ゲストの受信バッファ（補間用）
   private playerNames: string[] = []; // プレイヤーIDごとの表示名（未設定は Player{id+1}）
+  private notice = ""; // 撃破メッセージ（味方の攻撃/自爆時。§12-i）
+  private noticeT = 0; // 撃破メッセージの残り表示秒（ホストが管理・スナップショットで配布）
   onInput: ((msg: unknown) => void) | null = null; // guest が入力送信に使う
   private inputAcc = 0; // 入力送信レート制御（guest）
   private remoteInput: PlayerInput = { axis: { x: 0, y: 0 }, aim: null }; // host が受け取った相手(P2)の入力
@@ -555,6 +559,7 @@ export class Game {
       lives: this.lives,
       tg: this.tracksGen,
       kills: this.killsBy,
+      nt: this.notice,
       players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive, n: this.playerName(p.id) })),
       enemies: this.enemies.map((e) => ({
         x: e.x, y: e.y, b: e.bodyAngle, f: e.facing, k: e.type.key, hp: e.hp,
@@ -602,6 +607,7 @@ export class Game {
     this.lives = s1.lives;
     this.syncTracksGen(s1.tg);
     this.killsBy = s1.kills; // 各自の撃破数（自分の分を表示に使う）
+    this.notice = s1.nt;
     for (const p1 of s1.players) {
       const p = this.players[p1.id];
       if (!p) continue;
@@ -642,6 +648,7 @@ export class Game {
     this.lives = snap.lives;
     this.syncTracksGen(snap.tg);
     this.killsBy = snap.kills; // 各自の撃破数
+    this.notice = snap.nt;
     for (const ps of snap.players) {
       const p = this.players[ps.id];
       if (!p) continue;
@@ -903,6 +910,11 @@ export class Game {
     if (dt > 0.25) dt = 0.25;
 
     this.ageExplosions(dt); // 爆発エフェクトはどの状態でも進める（大破演出のため）
+    // 撃破メッセージの表示タイマー（ホスト/ソロが管理。ゲストはスナップショットの値に従う）
+    if (this.coopRole !== "guest" && this.noticeT > 0) {
+      this.noticeT -= dt;
+      if (this.noticeT <= 0) this.notice = "";
+    }
 
     // ゲストは状態遷移をホストのスナップショットに任せる（ローカルでは進めない）。
     if (this.coopRole !== "guest") {
@@ -1069,7 +1081,7 @@ export class Game {
         }
       }
       if (hitPlayer) {
-        this.onHitPlayer(hitPlayer);
+        this.onHitPlayer(hitPlayer, b.owner);
         if (this.state !== "playing") return; // ソロ死亡/全滅で状態が変わったら以降の弾処理を中断
         continue; // 弾を消費（無敵or相方生存で継続）
       }
@@ -1159,7 +1171,7 @@ export class Game {
   private detonate(seed: number[]): void {
     const det = new Set<number>(seed);
     const queue = [...seed];
-    const hitPlayers = new Set<Player>(); // 爆風に巻き込まれた生存プレイヤー
+    const hitPlayers = new Map<Player, number>(); // 爆風に巻き込まれた生存プレイヤー → 置いた人ID
     while (queue.length) {
       const m = this.mines[queue.pop()!];
       this.explosions.push({ x: m.x, y: m.y, t: 0, maxR: this.blastR, life: MINE_BLAST_LIFE });
@@ -1169,7 +1181,7 @@ export class Game {
       // 2) 戦車・連鎖も破壊前のタイルで判定（壊すブロックが遮蔽として機能）
       //    爆風内なら設置者本人も巻き込む（置いた直後に弾で起爆して無傷になる“ガード”悪用を防止）
       for (const p of this.players) {
-        if (p.alive && this.inBlast(m.x, m.y, p.pos.x, p.pos.y)) hitPlayers.add(p);
+        if (p.alive && this.inBlast(m.x, m.y, p.pos.x, p.pos.y) && !hitPlayers.has(p)) hitPlayers.set(p, m.by);
       }
       this.enemies = this.enemies.filter((e) => {
         if (this.inBlast(m.x, m.y, e.x, e.y)) {
@@ -1201,7 +1213,7 @@ export class Game {
       if (this.tutorial && bricks.length) this.tutBrickBroken = true; // 地雷ステップの達成
     }
     this.mines = this.mines.filter((_, j) => !det.has(j));
-    for (const p of hitPlayers) this.onHitPlayer(p); // 巻き込まれたプレイヤーを処理（チュートリアルは無敵）
+    for (const [p, by] of hitPlayers) this.onHitPlayer(p, by); // 巻き込まれたプレイヤーを処理（チュートリアルは無敵）
   }
 
   // 爆心(mx,my)から(tx,ty)が爆風範囲内かつ壁に遮られていないか。
@@ -1651,24 +1663,36 @@ export class Game {
   }
 
   // プレイヤー p が被弾したときの処理。ソロ＝従来の残機/リスポーン、Co-op＝待機（全滅でやり直し）。
-  private onHitPlayer(p: Player): void {
+  // killerId＝倒した相手（弾の owner／地雷の by。0..=プレイヤー / -1=敵）。
+  private onHitPlayer(p: Player, killerId: number): void {
     if (this.tutorial) return; // チュートリアルは無敵
-    if (this.coopRole === "host") this.killPlayer(p);
+    if (this.coopRole === "host") this.killPlayer(p, killerId);
     else this.onPlayerDeath(); // ソロ（p は必ず P1）
   }
 
-  // Co-op：p を待機（観戦）にする。全員やられたら全滅演出→やり直しへ。
-  private killPlayer(p: Player): void {
+  // Co-op：p を待機（観戦）にする。味方の攻撃/自爆はメッセージ表示。全員やられたら全滅へ。
+  private killPlayer(p: Player, killerId: number): void {
     if (!p.alive) return;
     p.alive = false;
     this.spawnDeathFx(p.pos.x, p.pos.y);
     this.deathMarks.push({ x: p.pos.x, y: p.pos.y, color: p.id === 0 ? COLORS.p1 : COLORS.p2 });
     playSound("explosion", { volume: 0.6, throttleMs: 60 });
+    // 撃破メッセージ（§12-i）：味方の攻撃なら「〇〇に倒された」、自分の地雷なら「自爆」。敵は通知しない。
+    if (killerId >= 0 && killerId !== p.id) {
+      this.setNotice(`${this.playerName(p.id)} は ${this.playerName(killerId)} に倒された`);
+    } else if (killerId === p.id) {
+      this.setNotice(`${this.playerName(p.id)} は自爆した`);
+    }
     if (this.players.some((q) => q.alive)) {
       playSound("miss", { volume: 0.7 }); // 相方は生存＝ミス音
     } else {
       this.coopWipe(); // 全滅
     }
+  }
+
+  private setNotice(text: string): void {
+    this.notice = text;
+    this.noticeT = NOTICE_DUR;
   }
 
   // Co-op：全滅演出に入り、DEATH_FX 後にステージを最初からやり直す（loop で処理）。
@@ -1913,6 +1937,14 @@ export class Game {
     }
 
     this.drawBossBar(ctx); // ボスがいれば体力バー
+
+    if (this.notice) {
+      // 撃破メッセージ（味方の攻撃/自爆）を上部中央に表示。
+      const ny = (this.immersive ? this.offsetY : 0) + 48;
+      ctx.textAlign = "center";
+      ctx.font = "bold 16px sans-serif";
+      this.hudText(ctx, this.notice, this.lw() / 2, ny);
+    }
 
     if (this.tutorial && (this.state === "playing" || this.tutDoneTimer > 0)) this.drawTutorial(ctx);
 

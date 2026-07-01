@@ -2,7 +2,7 @@
 // ファイルが無ければ無音でフォールバック。連続音はスロットルで間引く。
 // スマホの自動再生制約に対応するため、最初のユーザー操作で unlock() を呼ぶこと。
 
-const NAMES = ["shot", "bounce", "mine", "explosion", "miss", "clear", "gameover", "engine", "bgm"] as const;
+const NAMES = ["shot", "bounce", "mine", "explosion", "miss", "clear", "gameover", "coop_gameover", "engine", "bgm"] as const;
 export type SoundName = (typeof NAMES)[number];
 
 let ctx: AudioContext | null = null;

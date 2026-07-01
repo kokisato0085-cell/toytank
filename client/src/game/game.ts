@@ -1790,8 +1790,8 @@ export class Game {
       if (e.type.invisible && e.age >= CLOAK_TIME) continue; // 透明化中は描かない（轍・弾で推測）
       drawTank(ctx, e.x, e.y, e.type.color, e.bodyAngle, e.facing, this.er(e));
     }
-    // 照準線はローカル機が生存中のみ（ゲストは相手の照準を描かない／死亡=待機中は消す）
-    if (this.coopRole !== "guest" && this.players[this.localId].alive) this.drawAimLine(ctx);
+    // 照準線は各自の操作機（生存中のみ）に描く。ゲストも自機(P2)の予測線を出す（§12-d）。
+    if (this.players[this.localId].alive) this.drawAimLine(ctx);
     // プレイヤー戦車（ソロ=1台 / Co-op=2台）。待機(alive=false)は描かない。
     // ソロのみ：大破演出中/ゲームオーバー後は自機を隠す（破壊された＝従来挙動）。
     // Co-op では state を共有するため localId 基準の隠しは使わず alive で判定する（②-3で死＝alive=false）。

@@ -339,18 +339,6 @@ export class Game {
   private set spawn(v: { x: number; y: number }) {
     this.players[this.localId].spawn = v;
   }
-  private get facing(): number {
-    return this.players[this.localId].facing;
-  }
-  private set facing(v: number) {
-    this.players[this.localId].facing = v;
-  }
-  private get heading(): number {
-    return this.players[this.localId].heading;
-  }
-  private set heading(v: number) {
-    this.players[this.localId].heading = v;
-  }
   private get wasMoving(): boolean {
     return this.players[this.localId].wasMoving;
   }
@@ -362,12 +350,6 @@ export class Game {
   }
   private set playerIdleTime(v: number) {
     this.players[this.localId].idleTime = v;
-  }
-  private get playerTrackFrom(): { x: number; y: number } {
-    return this.players[this.localId].trackFrom;
-  }
-  private set playerTrackFrom(v: { x: number; y: number }) {
-    this.players[this.localId].trackFrom = v;
   }
 
   constructor(private canvas: HTMLCanvasElement, private stage: StageData) {
@@ -1642,12 +1624,20 @@ export class Game {
   }
 
   // 自機だけリスポーンする。倒した敵は復活させないが、生き残った敵は定位置(home)へ戻す。
+  // 全プレイヤー（ソロ=P1 / Co-op=P1・P2）を各自の初期位置・向きに戻す。
+  private resetPlayersToSpawn(): void {
+    for (const p of this.players) {
+      p.pos = { ...p.spawn };
+      p.trackFrom = { ...p.spawn };
+      p.facing = -Math.PI / 2;
+      p.heading = -Math.PI / 2;
+      p.wasMoving = false;
+      p.alive = true;
+    }
+  }
+
   private respawnPlayer(): void {
-    this.pos = { ...this.spawn };
-    this.playerTrackFrom = { ...this.spawn };
-    this.facing = -Math.PI / 2;
-    this.heading = -Math.PI / 2;
-    this.wasMoving = false;
+    this.resetPlayersToSpawn(); // P1・P2 とも初期位置へ
     this.bullets = [];
     this.mines = [];
     this.explosions = [];
@@ -1675,11 +1665,7 @@ export class Game {
     this.tracks = [];
     this.tracksGen++; // ゲストにも轍クリアを伝える
     this.deathMarks = [];
-    this.pos = { ...this.spawn };
-    this.playerTrackFrom = { ...this.spawn };
-    this.facing = -Math.PI / 2;
-    this.heading = -Math.PI / 2;
-    this.wasMoving = false;
+    this.resetPlayersToSpawn(); // P1・P2 とも初期位置へ
   }
 
   // 最初からやり直す（残機リセット）。クリア／ゲームオーバー後に呼ぶ。

@@ -226,6 +226,7 @@ export interface Snapshot {
   label: string; // ステージ表示名
   lives: number;
   tg: number; // 轍リセット世代番号（変わったらゲストは轍をクリア）
+  kills: Record<string, number>[]; // プレイヤーIDごとの撃破数（各自が自分の分を表示）
   players: { id: number; x: number; y: number; h: number; f: number; alive: boolean }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
   bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
@@ -288,7 +289,7 @@ export class Game {
   private remoteMines = 0; // host が受け取った P2 の地雷設置要求数
   private enemies: Enemy[];
   private bullets: Bullet[] = [];
-  private mines: { x: number; y: number; t: number; owner: Enemy | null }[] = [];
+  private mines: { x: number; y: number; t: number; owner: Enemy | null; by: number }[] = []; // by=置いた人のID（プレイヤー0.. / 敵は-1）
   private explosions: { x: number; y: number; t: number; maxR: number; life: number; color?: string }[] = [];
   private blastR: number;
   private enemyMoving = false; // このフレーム、敵が1体でも移動したか（走行音用）
@@ -304,7 +305,7 @@ export class Game {
   private introHealed = false; // 直近の開始画面で「残機+1回復」を表示するか
   clearGrantsLife = false; // このステージをクリアすると残機+1か（main.tsが面ごとに設定）
   private clearHealed = false; // クリア画面で「残機+1回復」を表示するか
-  private kills: Record<string, number> = {}; // タイプ別の撃破数（リザルト用）
+  private killsBy: Record<string, number>[] = []; // プレイヤーIDごとの[敵タイプ→撃破数]（帰属集計・リザルト用）
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
   private tracksGen = 0; // 轍リセット世代（クリアするたび+1・スナップショットで送りゲストに反映）
   private lastTracksGen = -1; // ゲスト：最後に反映した轍世代（変化で轍クリア）
@@ -448,7 +449,7 @@ export class Game {
     this.fit();
     if (resetLives) {
       this.lives = SOLO_LIVES;
-      this.kills = {}; // 新しいランの開始
+      this.killsBy = []; // 新しいランの開始（プレイヤー別撃破をリセット）
       startBgm(0.2); // リセット（新しいラン）はBGMを頭から
     }
     this.resetStage();
@@ -552,6 +553,7 @@ export class Game {
       label: this.stageLabel,
       lives: this.lives,
       tg: this.tracksGen,
+      kills: this.killsBy,
       players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive })),
       enemies: this.enemies.map((e) => ({
         x: e.x, y: e.y, b: e.bodyAngle, f: e.facing, k: e.type.key, hp: e.hp,
@@ -598,6 +600,7 @@ export class Game {
     this.stageLabel = s1.label;
     this.lives = s1.lives;
     this.syncTracksGen(s1.tg);
+    this.killsBy = s1.kills; // 各自の撃破数（自分の分を表示に使う）
     for (const p1 of s1.players) {
       const p = this.players[p1.id];
       if (!p) continue;
@@ -625,7 +628,7 @@ export class Game {
       y: b.y + (moving ? b.vy * dt0 : 0),
       vx: b.vx, vy: b.vy, bounces: 0, owner: b.o, age: 1, group: 0,
     }));
-    this.mines = s1.mines.map((m) => ({ x: m.x, y: m.y, t: m.mt, owner: null }));
+    this.mines = s1.mines.map((m) => ({ x: m.x, y: m.y, t: m.mt, owner: null, by: -1 }));
     this.deathMarks = s1.marks.map((d) => ({ x: d.x, y: d.y, color: d.c }));
     this.explosions = s1.exps.map((ex) => ({ x: ex.x, y: ex.y, t: ex.et, maxR: ex.r, life: ex.l, color: ex.c }));
   }
@@ -636,6 +639,7 @@ export class Game {
     this.stageLabel = snap.label;
     this.lives = snap.lives;
     this.syncTracksGen(snap.tg);
+    this.killsBy = snap.kills; // 各自の撃破数
     for (const ps of snap.players) {
       const p = this.players[ps.id];
       if (!p) continue;
@@ -647,7 +651,7 @@ export class Game {
     }
     this.enemies = snap.enemies.map(guestEnemy);
     this.bullets = snap.bullets.map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, bounces: 0, owner: b.o, age: 1, group: 0 }));
-    this.mines = snap.mines.map((m) => ({ x: m.x, y: m.y, t: m.mt, owner: null }));
+    this.mines = snap.mines.map((m) => ({ x: m.x, y: m.y, t: m.mt, owner: null, by: -1 }));
     this.deathMarks = snap.marks.map((d) => ({ x: d.x, y: d.y, color: d.c }));
     this.explosions = snap.exps.map((ex) => ({ x: ex.x, y: ex.y, t: ex.et, maxR: ex.r, life: ex.l, color: ex.c }));
   }
@@ -897,6 +901,7 @@ export class Game {
         if (this.coopWiping) {
           // Co-op 全滅 → ステージを最初からやり直し（2人とも復活・敵/壁リセット）
           this.coopWiping = false;
+          this.killsBy = []; // 新しい挑戦＝撃破数を0から数え直す
           this.resetStage();
           startBgm(0.2);
           this.beginStage("Co-op");
@@ -1035,7 +1040,7 @@ export class Game {
         const en = this.enemies[ei];
         en.hp--;
         if (en.hp <= 0) {
-          this.markKill(en); // 撃破数＋大破演出＋バッテン印
+          this.markKill(en, b.owner); // 撃破数（撃った人に帰属）＋大破演出＋バッテン印
           this.enemies.splice(ei, 1);
         } else {
           this.hitFx(b.x, b.y); // HPが残る敵は小ヒット表示
@@ -1125,7 +1130,7 @@ export class Game {
   // 指定プレイヤーの位置に地雷を設置（プレイヤーの地雷は owner=null）。
   private layMineFrom(p: Player): void {
     if (this.mines.filter((m) => m.owner === null).length >= MAX_MINES) return;
-    this.mines.push({ x: p.pos.x, y: p.pos.y, t: 0, owner: null });
+    this.mines.push({ x: p.pos.x, y: p.pos.y, t: 0, owner: null, by: p.id });
     playSound("mine", { volume: 0.5 }); // 地雷設置音
   }
 
@@ -1158,7 +1163,7 @@ export class Game {
         if (this.inBlast(m.x, m.y, e.x, e.y)) {
           e.hp--;
           if (e.hp <= 0) {
-            this.markKill(e); // 撃破数＋大破演出＋バッテン印
+            this.markKill(e, m.by); // 撃破数（地雷を置いた人に帰属）＋大破演出＋バッテン印
             return false;
           }
           this.hitFx(e.x, e.y);
@@ -1263,9 +1268,23 @@ export class Game {
     }
   }
 
+  // 倒したプレイヤー(id)の撃破マップ（遅延生成）。id<0(敵)は帰属しない。
+  private killMap(id: number): Record<string, number> {
+    return (this.killsBy[id] ??= {});
+  }
+
+  // ローカル機自身の撃破マップ（表示用）。
+  private myKills(): Record<string, number> {
+    return this.killsBy[this.localId] ?? {};
+  }
+
   // 敵の撃破を記録（撃破数の集計＋大破演出＋やられた座標に白いバッテン印）。
-  private markKill(e: Enemy): void {
-    this.kills[e.type.key] = (this.kills[e.type.key] ?? 0) + 1;
+  // killerId＝倒したプレイヤーID（弾の owner／地雷の by）。敵の巻き添え(<0)はどのプレイヤーにも計上しない。
+  private markKill(e: Enemy, killerId: number): void {
+    if (killerId >= 0) {
+      const m = this.killMap(killerId);
+      m[e.type.key] = (m[e.type.key] ?? 0) + 1;
+    }
     this.spawnDeathFx(e.x, e.y); // 敵も大破演出
     this.deathMarks.push({ x: e.x, y: e.y, color: "#ffffff" });
     playSound("explosion", { volume: 0.6, throttleMs: 60 }); // 戦車大破音（爆発と同じ）
@@ -1608,7 +1627,7 @@ export class Game {
         e.mineCd -= dt;
         if (e.mineCd <= 0) {
           if (this.mines.filter((m) => m.owner === e).length < t.maxMines) {
-            this.mines.push({ x: e.x, y: e.y, t: 0, owner: e });
+            this.mines.push({ x: e.x, y: e.y, t: 0, owner: e, by: -1 });
             playSound("mine", { volume: 0.35, throttleMs: 120 }); // 敵の地雷設置音（控えめ）
             e.mineCd = ENEMY_MINE_INTERVAL;
           } else {
@@ -1732,7 +1751,7 @@ export class Game {
   // 最初からやり直す（残機リセット）。クリア／ゲームオーバー後に呼ぶ。
   restart(): void {
     this.lives = SOLO_LIVES;
-    this.kills = {};
+    this.killsBy = [];
     startBgm(0.2); // 頭からBGM再生
     this.resetStage();
     this.state = "playing";
@@ -1942,7 +1961,7 @@ export class Game {
     ctx.font = "bold 30px sans-serif";
     ctx.fillText("ステージクリア！", cx, titleY);
 
-    const totalKills = Object.values(this.kills).reduce((a, b) => a + b, 0);
+    const totalKills = Object.values(this.myKills()).reduce((a, b) => a + b, 0);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 22px sans-serif";
     ctx.fillText(`総撃破数  ${totalKills}`, cx, killsY);
@@ -2004,7 +2023,8 @@ export class Game {
     ctx.font = "18px sans-serif";
     ctx.fillText("撃破数", cx, cy - 34);
 
-    const entries = Object.keys(this.kills).map((k) => ({ color: ENEMY_TYPES[k].color, count: this.kills[k] }));
+    const mk = this.myKills();
+    const entries = Object.keys(mk).map((k) => ({ color: ENEMY_TYPES[k].color, count: mk[k] }));
     // 種類が5を超えたら2段に分けて表示（横あふれ防止）
     const twoRows = entries.length > 5;
     const perRow = twoRows ? Math.ceil(entries.length / 2) : entries.length;

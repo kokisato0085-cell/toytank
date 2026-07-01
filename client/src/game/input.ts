@@ -58,7 +58,19 @@ export class Input {
     canvas.addEventListener("pointermove", this.onMove);
     canvas.addEventListener("pointerup", this.onUp);
     canvas.addEventListener("pointercancel", this.onUp);
+    // フォーカス喪失/タブ非表示で keyup/pointerup が届かず入力が押しっぱなしになるのを防ぐ。
+    window.addEventListener("blur", this.clearHeld);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.clearHeld();
+    });
   }
+
+  // 保持中の入力（押しっぱなしキー・ドラッグ中スティック）をすべて解除する。
+  private clearHeld = (): void => {
+    this.keys.clear();
+    this.move.active = false;
+    this.aim.active = false;
+  };
 
   // 論理(CSS)px へ変換。canvas.width は内部解像度(×dpr)なので clientWidth(表示サイズ)で割る。
   private toCanvas(e: PointerEvent): { x: number; y: number } {

@@ -228,6 +228,8 @@ export interface Snapshot {
   lives: number;
   tg: number; // 轍リセット世代番号（変わったらゲストは轍をクリア）
   kills: Record<string, number>[]; // プレイヤーIDごとの撃破数（各自が自分の分を表示）
+  fk: number[]; // プレイヤーIDごとの味方撃破数（誤射）
+  ka: number[]; // プレイヤーIDごとの「味方に倒された」数
   nt: string; // 撃破メッセージ（味方の攻撃/自爆。空=非表示）
   players: { id: number; x: number; y: number; h: number; f: number; alive: boolean; n: string }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
@@ -304,13 +306,14 @@ export class Game {
   private lives = SOLO_LIVES;
   private state: GameState = "playing";
   private interTimer = 0; // 区切りポーズ／開始画面／大破演出の残り秒
-  private pendingGameOver = false; // 大破演出のあとゲームオーバーへ進むか
-  private coopWiping = false; // Co-op：全滅演出のあとステージを最初からやり直すか
+  private pendingGameOver = false; // 大破演出のあとゲームオーバー（ソロ=残機ゼロ / Co-op=全滅リザルト）へ進むか
   private stageLabel = ""; // 「ステージN」表示用
   private introHealed = false; // 直近の開始画面で「残機+1回復」を表示するか
   clearGrantsLife = false; // このステージをクリアすると残機+1か（main.tsが面ごとに設定）
   private clearHealed = false; // クリア画面で「残機+1回復」を表示するか
   private killsBy: Record<string, number>[] = []; // プレイヤーIDごとの[敵タイプ→撃破数]（帰属集計・リザルト用）
+  private friendlyKills: number[] = []; // プレイヤーIDごとの味方撃破数（誤射）
+  private killedByAlly: number[] = []; // プレイヤーIDごとの「味方に倒された」数
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
   private tracksGen = 0; // 轍リセット世代（クリアするたび+1・スナップショットで送りゲストに反映）
   private lastTracksGen = -1; // ゲスト：最後に反映した轍世代（変化で轍クリア）
@@ -454,7 +457,9 @@ export class Game {
     this.fit();
     if (resetLives) {
       this.lives = SOLO_LIVES;
-      this.killsBy = []; // 新しいランの開始（プレイヤー別撃破をリセット）
+      this.killsBy = []; // 新しいランの開始（プレイヤー別撃破・味方撃破・被撃破をリセット）
+      this.friendlyKills = [];
+      this.killedByAlly = [];
       startBgm(0.2); // リセット（新しいラン）はBGMを頭から
     }
     this.resetStage();
@@ -534,7 +539,7 @@ export class Game {
     this.remoteInput = { axis: { x: 0, y: 0 }, aim: null };
     this.remoteFires = [];
     this.remoteMines = 0;
-    this.coopWiping = false;
+    this.pendingGameOver = false;
     this.beginStage("Co-op");
   }
 
@@ -559,6 +564,8 @@ export class Game {
       lives: this.lives,
       tg: this.tracksGen,
       kills: this.killsBy,
+      fk: this.friendlyKills,
+      ka: this.killedByAlly,
       nt: this.notice,
       players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive, n: this.playerName(p.id) })),
       enemies: this.enemies.map((e) => ({
@@ -607,6 +614,8 @@ export class Game {
     this.lives = s1.lives;
     this.syncTracksGen(s1.tg);
     this.killsBy = s1.kills; // 各自の撃破数（自分の分を表示に使う）
+    this.friendlyKills = s1.fk;
+    this.killedByAlly = s1.ka;
     this.notice = s1.nt;
     for (const p1 of s1.players) {
       const p = this.players[p1.id];
@@ -648,6 +657,8 @@ export class Game {
     this.lives = snap.lives;
     this.syncTracksGen(snap.tg);
     this.killsBy = snap.kills; // 各自の撃破数
+    this.friendlyKills = snap.fk;
+    this.killedByAlly = snap.ka;
     this.notice = snap.nt;
     for (const ps of snap.players) {
       const p = this.players[ps.id];
@@ -922,15 +933,8 @@ export class Game {
       // 大破演出 → 終わったらゲームオーバー or 区切りポーズ（自機復活）へ
       this.interTimer -= dt;
       if (this.interTimer <= 0) {
-        if (this.coopWiping) {
-          // Co-op 全滅 → ステージを最初からやり直し（2人とも復活・敵/壁リセット）
-          this.coopWiping = false;
-          this.killsBy = []; // 新しい挑戦＝撃破数を0から数え直す
-          this.resetStage();
-          startBgm(0.2);
-          this.beginStage("Co-op");
-        } else if (this.pendingGameOver) {
-          this.state = "gameover";
+        if (this.pendingGameOver) {
+          this.state = "gameover"; // ソロ=残機ゼロ / Co-op=全滅 → リザルトへ
           playSound("gameover", { volume: 0.7 }); // ゲームオーバー音
           this.onGameOver?.();
         } else {
@@ -1680,6 +1684,8 @@ export class Game {
     // 撃破メッセージ（§12-i）：味方の攻撃なら「〇〇に倒された」、自分の地雷なら「自爆」。敵は通知しない。
     if (killerId >= 0 && killerId !== p.id) {
       this.setNotice(`${this.playerName(p.id)} は ${this.playerName(killerId)} に倒された`);
+      this.friendlyKills[killerId] = (this.friendlyKills[killerId] ?? 0) + 1; // 誤射（味方撃破）
+      this.killedByAlly[p.id] = (this.killedByAlly[p.id] ?? 0) + 1; // 味方に倒された
     } else if (killerId === p.id) {
       this.setNotice(`${this.playerName(p.id)} は自爆した`);
     }
@@ -1695,14 +1701,22 @@ export class Game {
     this.noticeT = NOTICE_DUR;
   }
 
-  // Co-op：全滅演出に入り、DEATH_FX 後にステージを最初からやり直す（loop で処理）。
+  // Co-op：全滅演出に入り、DEATH_FX 後にリザルト（ゲームオーバー）へ（loop で処理・§12-j）。
   private coopWipe(): void {
     stopBgm();
-    playSound("gameover", { volume: 0.7 });
-    this.coopWiping = true;
-    this.pendingGameOver = false;
+    this.pendingGameOver = true; // 全滅＝リザルト表示へ（自動やり直しは廃止）
     this.state = "dying";
     this.interTimer = DEATH_FX;
+  }
+
+  // Co-op：リザルトの「もう一度」でステージを最初からやり直す（統計・撃破もリセット）。
+  restartCoop(stage: StageData): void {
+    this.killsBy = [];
+    this.friendlyKills = [];
+    this.killedByAlly = [];
+    this.notice = "";
+    this.noticeT = 0;
+    this.startCoopHost(stage);
   }
 
   private onPlayerDeath(): void {
@@ -1788,6 +1802,8 @@ export class Game {
   restart(): void {
     this.lives = SOLO_LIVES;
     this.killsBy = [];
+    this.friendlyKills = [];
+    this.killedByAlly = [];
     startBgm(0.2); // 頭からBGM再生
     this.resetStage();
     this.state = "playing";
@@ -2082,6 +2098,25 @@ export class Game {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(title, cx, cy - 78);
+
+    if (this.coopRole) {
+      // Co-op：各プレイヤーの 敵撃破 / 味方撃破(誤射) / 味方に倒された を GAME OVER の上に表示（§12-j）。
+      ctx.font = "bold 20px sans-serif";
+      const n = this.players.length;
+      this.players.forEach((p, i) => {
+        const enemyK = Object.values(this.killsBy[p.id] ?? {}).reduce((a, b) => a + b, 0);
+        const fk = this.friendlyKills[p.id] ?? 0;
+        const ka = this.killedByAlly[p.id] ?? 0;
+        ctx.fillStyle = p.id === 0 ? COLORS.p1 : COLORS.p2;
+        const y = cy - 78 - 40 - (n - 1 - i) * 30; // タイトル（cy-78）の上に積む
+        ctx.fillText(`${this.playerName(p.id)}  敵撃破 ${enemyK} / 誤射 ${fk} / 味方に倒された ${ka}`, cx, y);
+      });
+      ctx.fillStyle = "#fff";
+      ctx.font = "16px sans-serif";
+      const hint = this.coopRole === "host" ? "「もう一度」/「タイトルへ」を選んでください" : "ホストの操作を待っています…";
+      ctx.fillText(hint, cx, cy + 20);
+      return;
+    }
 
     ctx.fillStyle = "#fff";
     ctx.font = "18px sans-serif";

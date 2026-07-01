@@ -227,7 +227,7 @@ export interface Snapshot {
   lives: number;
   tg: number; // 轍リセット世代番号（変わったらゲストは轍をクリア）
   kills: Record<string, number>[]; // プレイヤーIDごとの撃破数（各自が自分の分を表示）
-  players: { id: number; x: number; y: number; h: number; f: number; alive: boolean }[];
+  players: { id: number; x: number; y: number; h: number; f: number; alive: boolean; n: string }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
   bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
   mines: { x: number; y: number; mt: number }[];
@@ -282,6 +282,7 @@ export class Game {
   onSnapshot: ((snap: Snapshot) => void) | null = null; // host が送信に使う
   private snapAcc = 0; // スナップショット送信レート制御
   private snapBuf: { time: number; snap: Snapshot }[] = []; // ゲストの受信バッファ（補間用）
+  private playerNames: string[] = []; // プレイヤーIDごとの表示名（未設定は Player{id+1}）
   onInput: ((msg: unknown) => void) | null = null; // guest が入力送信に使う
   private inputAcc = 0; // 入力送信レート制御（guest）
   private remoteInput: PlayerInput = { axis: { x: 0, y: 0 }, aim: null }; // host が受け取った相手(P2)の入力
@@ -554,7 +555,7 @@ export class Game {
       lives: this.lives,
       tg: this.tracksGen,
       kills: this.killsBy,
-      players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive })),
+      players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive, n: this.playerName(p.id) })),
       enemies: this.enemies.map((e) => ({
         x: e.x, y: e.y, b: e.bodyAngle, f: e.facing, k: e.type.key, hp: e.hp,
         cl: e.type.invisible && e.age >= CLOAK_TIME,
@@ -610,6 +611,7 @@ export class Game {
       p.heading = lerpAngle(p0.h, p1.h, a);
       p.facing = lerpAngle(p0.f, p1.f, a);
       p.alive = p1.alive;
+      this.playerNames[p1.id] = p1.n;
     }
     // 敵：枚数が一致する間はインデックス対応で補間、変化時は新しい方をそのまま。
     if (s0.enemies.length === s1.enemies.length) {
@@ -648,6 +650,7 @@ export class Game {
       p.heading = ps.h;
       p.facing = ps.f;
       p.alive = ps.alive;
+      this.playerNames[ps.id] = ps.n;
     }
     this.enemies = snap.enemies.map(guestEnemy);
     this.bullets = snap.bullets.map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, bounces: 0, owner: b.o, age: 1, group: 0 }));
@@ -782,6 +785,15 @@ export class Game {
     }
     p.idleTime = p.wasMoving ? 0 : p.idleTime + dt; // 角待ち検知
     if (inp.aim) p.facing = Math.atan2(inp.aim.y, inp.aim.x); // 照準中は砲塔を照準方向へ
+  }
+
+  // プレイヤーの表示名を設定（ホスト=自分[0]・受信したゲスト名[1] など）。
+  setPlayerName(id: number, name: string): void {
+    this.playerNames[id] = name;
+  }
+  // 表示名（未設定は Player{id+1}）。
+  private playerName(id: number): string {
+    return this.playerNames[id] || `Player${id + 1}`;
   }
 
   // ゲストから届いた入力を保存（ホストが P2 駆動に使う）。移動/照準は最新、発射/地雷はキューに追加。
@@ -1818,7 +1830,9 @@ export class Game {
     for (const p of this.players) {
       if (!p.alive) continue;
       if (p.id === this.localId && hideLocalDeath) continue;
-      drawTank(ctx, p.pos.x, p.pos.y, p.id === 0 ? COLORS.p1 : COLORS.p2, p.heading, p.facing);
+      const col = p.id === 0 ? COLORS.p1 : COLORS.p2;
+      drawTank(ctx, p.pos.x, p.pos.y, col, p.heading, p.facing);
+      if (this.coopRole) this.drawNameTag(ctx, p, col); // Co-op：戦車の上に名前
     }
     for (const b of this.bullets) {
       drawBullet(ctx, b.x, b.y, Math.atan2(b.vy, b.vx), b.owner >= 0 ? COLORS.bulletP : COLORS.bulletE);
@@ -1843,6 +1857,24 @@ export class Game {
     ctx.strokeText(text, x, y);
     ctx.fillStyle = "#fff";
     ctx.fillText(text, x, y);
+  }
+
+  // Co-op：戦車の上に表示名を描く（ワールド座標系。画面上で一定サイズになるよう scale で割る）。
+  private drawNameTag(ctx: CanvasRenderingContext2D, p: Player, col: string): void {
+    const name = this.playerName(p.id);
+    const fs = 13 / this.scale;
+    ctx.save();
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 4 / this.scale;
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.fillStyle = col;
+    const y = p.pos.y - TANK_RADIUS - 5 / this.scale;
+    ctx.strokeText(name, p.pos.x, y);
+    ctx.fillText(name, p.pos.x, y);
+    ctx.restore();
   }
 
   // 残機（自機アイコン×数）・敵数・ステージ番号・状態。

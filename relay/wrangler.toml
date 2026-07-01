@@ -3,7 +3,7 @@
 # 開発: `wrangler dev`     → ws://localhost:8787/ws
 name = "toytank-relay"
 main = "src/index.ts"
-compatibility_date = "2026-06-01"
+compatibility_date = "2024-09-23"
 
 # 部屋＝Durable Object。1部屋=1インスタンスで host/guest の2本のWebSocketを中継する。
 [[durable_objects.bindings]]

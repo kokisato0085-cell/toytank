@@ -225,6 +225,7 @@ export interface Snapshot {
   st: GameState; // ゲーム状態
   label: string; // ステージ表示名
   lives: number;
+  tg: number; // 轍リセット世代番号（変わったらゲストは轍をクリア）
   players: { id: number; x: number; y: number; h: number; f: number; alive: boolean }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
   bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
@@ -304,6 +305,9 @@ export class Game {
   private clearHealed = false; // クリア画面で「残機+1回復」を表示するか
   private kills: Record<string, number> = {}; // タイプ別の撃破数（リザルト用）
   private tracks: { x: number; y: number; a: number }[] = []; // キャタピラ跡
+  private tracksGen = 0; // 轍リセット世代（クリアするたび+1・スナップショットで送りゲストに反映）
+  private lastTracksGen = -1; // ゲスト：最後に反映した轍世代（変化で轍クリア）
+  private enemyTrackFrom: { x: number; y: number }[] = []; // ゲスト：敵の轍生成用（インデックス対応の前フレーム位置）
   private deathMarks: { x: number; y: number; color: string }[] = []; // 撃破バッテン印
   private initialTiles: TileValue[][]; // 壊せる壁の復元用
 
@@ -557,6 +561,8 @@ export class Game {
     this.localId = 1;
     this.players = this.coopSpawns(stage);
     this.snapBuf = []; // 前セッションの受信バッファを破棄
+    this.lastTracksGen = -1; // 最初のスナップショットで必ず轍を同期
+    this.enemyTrackFrom = [];
     this.state = "playing"; // 表示状態はスナップショットで上書きされる
   }
 
@@ -567,6 +573,7 @@ export class Game {
       st: this.state,
       label: this.stageLabel,
       lives: this.lives,
+      tg: this.tracksGen,
       players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive })),
       enemies: this.enemies.map((e) => ({
         x: e.x, y: e.y, b: e.bodyAngle, f: e.facing, k: e.type.key, hp: e.hp,
@@ -612,6 +619,7 @@ export class Game {
     this.state = s1.st; // 状態・ラベル等の離散値は新しい方
     this.stageLabel = s1.label;
     this.lives = s1.lives;
+    this.syncTracksGen(s1.tg);
     for (const p1 of s1.players) {
       const p = this.players[p1.id];
       if (!p) continue;
@@ -649,6 +657,7 @@ export class Game {
     this.state = snap.st;
     this.stageLabel = snap.label;
     this.lives = snap.lives;
+    this.syncTracksGen(snap.tg);
     for (const ps of snap.players) {
       const p = this.players[ps.id];
       if (!p) continue;
@@ -809,12 +818,43 @@ export class Game {
     if (msg.mines) this.remoteMines += msg.mines;
   }
 
-  // ゲスト：補間後のプレイヤー位置の移動からキャタピラ跡をローカル生成する（轍はスナップショットに含めないため）。
+  // ゲスト：轍リセット世代が変わったらローカルの轍をクリア（ホストの被弾/リセットに追従）。
+  private syncTracksGen(tg: number): void {
+    if (tg !== this.lastTracksGen) {
+      this.tracks = [];
+      this.enemyTrackFrom = []; // 敵の轍の前フレーム位置も破棄
+      this.lastTracksGen = tg;
+    }
+  }
+
+  // ゲスト：補間後の位置の移動からキャタピラ跡をローカル生成する（轍はスナップショットに含めないため）。
   private stampGuestTracks(): void {
     for (const p of this.players) {
       if (!p.alive) continue;
       this.stampTrack(p.pos.x, p.pos.y, p.heading, p.trackFrom);
     }
+    // 敵の轍：敵IDが無いためインデックス対応で前フレーム位置から刻む（近似）。
+    const prev = this.enemyTrackFrom;
+    const cell = this.stage.grid.cell;
+    for (let i = 0; i < this.enemies.length; i++) {
+      const e = this.enemies[i];
+      const p = prev[i];
+      if (!p) {
+        prev[i] = { x: e.x, y: e.y };
+        continue;
+      }
+      const d = Math.hypot(e.x - p.x, e.y - p.y);
+      if (d >= cell) {
+        // 大きな飛び＝敵の入れ替え/リセット → 追従のみ（轍は刻まない）
+        p.x = e.x;
+        p.y = e.y;
+      } else if (d >= TRACK_GAP) {
+        this.addTrack(e.x, e.y, e.bodyAngle); // 履帯は車体向きで刻む
+        p.x = e.x;
+        p.y = e.y;
+      }
+    }
+    prev.length = this.enemies.length; // 敵が減ったら余分を切る
   }
 
   // ゲスト：自分の操作（移動軸・照準・発射・地雷）を一定間隔でホストへ送る（§12-c）。
@@ -1612,6 +1652,7 @@ export class Game {
     this.mines = [];
     this.explosions = [];
     this.tracks = []; // 轍は被弾でリセット（継続しない）。バッテン印は維持
+    this.tracksGen++; // ゲストにも轍クリアを伝える
     for (const e of this.enemies) {
       e.x = e.hx;
       e.y = e.hy;
@@ -1632,6 +1673,7 @@ export class Game {
     this.mines = [];
     this.explosions = [];
     this.tracks = [];
+    this.tracksGen++; // ゲストにも轍クリアを伝える
     this.deathMarks = [];
     this.pos = { ...this.spawn };
     this.playerTrackFrom = { ...this.spawn };

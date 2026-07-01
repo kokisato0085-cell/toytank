@@ -2121,11 +2121,7 @@ export class Game {
         const y = cy - 78 - 40 - (n - 1 - i) * 30; // タイトル（cy-78）の上に積む
         ctx.fillText(`${this.playerName(p.id)}  敵撃破 ${enemyK} / 誤射 ${fk} / 味方に倒された ${ka}`, cx, y);
       });
-      ctx.fillStyle = "#fff";
-      ctx.font = "16px sans-serif";
-      const hint = this.coopRole === "host" ? "「もう一度」/「タイトルへ」を選んでください" : "ホストの操作を待っています…";
-      ctx.fillText(hint, cx, cy + 20);
-      return;
+      // チーム戦績はタイトル上に表示し、下は色別の撃破数（自分の分）を共通表示する。
     }
 
     ctx.fillStyle = "#fff";
@@ -2158,7 +2154,12 @@ export class Game {
     ctx.textAlign = "center";
     ctx.fillStyle = "#fff";
     ctx.font = "16px sans-serif";
-    ctx.fillText("R キー / リスタートボタンで再挑戦", cx, cy + (twoRows ? 84 : 70));
+    const hint = this.coopRole
+      ? this.coopRole === "host"
+        ? "「もう一度」/「タイトルへ」を選んでください"
+        : "ホストの操作を待っています…"
+      : "R キー / リスタートボタンで再挑戦";
+    ctx.fillText(hint, cx, cy + (twoRows ? 84 : 70));
   }
 
   // 被弾の区切り画面：「ミス！」＋ 残機（自機アイコン×数）。

@@ -283,6 +283,7 @@ export class Game {
   private localId = 0; // このクライアントが操作するプレイヤー（ホスト=0 / ゲスト=1）
   // Co-op（BasicDesign §12）。null=ソロ/通常。host=権威でsim実行＋スナップショット送信。guest=描画専用。
   coopRole: "host" | "guest" | null = null;
+  private guestBgm = false; // ゲスト：BGMが鳴っているか（状態に追従して止め/再開する）
   onSnapshot: ((snap: Snapshot) => void) | null = null; // host が送信に使う
   private snapAcc = 0; // スナップショット送信レート制御
   private snapBuf: { time: number; snap: Snapshot }[] = []; // ゲストの受信バッファ（補間用）
@@ -552,6 +553,7 @@ export class Game {
     this.snapBuf = []; // 前セッションの受信バッファを破棄
     this.lastTracksGen = -1; // 最初のスナップショットで必ず轍を同期
     this.enemyTrackFrom = [];
+    this.guestBgm = true; // enterGame が開始する前提（loop では playing 中は再開しない）
     this.state = "playing"; // 表示状態はスナップショットで上書きされる
   }
 
@@ -973,6 +975,15 @@ export class Game {
       this.interpolateGuest(); // 受信バッファから補間して反映
       this.stampGuestTracks(); // 補間後の移動から轍をローカル生成（轍は同期しないため）
       this.sendGuestInput(dt); // 自分の操作をホストへ送る
+      // BGMをスナップショット由来の状態に追従（全滅リザルト等で止め、やり直しで再開）
+      const wantBgm = this.state === "playing" || this.state === "intro" || this.state === "respawning";
+      if (wantBgm && !this.guestBgm) {
+        startBgm(0.2);
+        this.guestBgm = true;
+      } else if (!wantBgm && this.guestBgm) {
+        stopBgm();
+        this.guestBgm = false;
+      }
     }
     this.render();
 

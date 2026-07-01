@@ -71,6 +71,11 @@
         width: 220px; padding: 10px; margin: 8px auto; display: block;
         color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
       }
+      .coop-name-row { margin: 10px auto; display: flex; align-items: center; justify-content: center; gap: 8px; }
+      #coop-name {
+        font-size: 16px; padding: 8px 10px; width: 160px; text-align: center;
+        color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      }
       .coop-ok { font-size: 24px; font-weight: 800; color: var(--accent); margin-top: 16px; }
       #coop-join-status { min-height: 18px; color: #ff8080; }
 
@@ -267,6 +272,10 @@
       <!-- A: 作る/入る の選択 -->
       <div id="coop-choose" class="coop-panel">
         <p class="muted-note">2人で協力プレイ。片方が「部屋を作る」→ 合言葉を相手に教えて「部屋に入る」。</p>
+        <div class="coop-name-row">
+          <label for="coop-name">なまえ：</label>
+          <input id="coop-name" type="text" maxlength="10" autocomplete="off" placeholder="Player1" />
+        </div>
         <div class="menu">
           <button id="coop-create">部屋を作る（ホスト）</button>
           <button id="coop-show-join">部屋に入る（合言葉を入力）</button>

@@ -342,6 +342,22 @@ document.getElementById("gear-skip")?.addEventListener("click", () => backToTitl
 
 // ---- Co-op マルチ（ロビー。BasicDesign §12-b）----
 let relay: RelayClient | null = null;
+let myCoopName = ""; // 自分の表示名（部屋作成/参加時に確定）
+
+const coopNameInput = document.getElementById("coop-name") as HTMLInputElement | null;
+// 名前欄の値を取り出す（前後空白除去・最大10文字）。
+function readCoopName(): string {
+  return (coopNameInput?.value ?? "").trim().slice(0, 10);
+}
+// 前回の名前を localStorage から復元して名前欄に入れる。
+function prefillCoopName(): void {
+  if (coopNameInput && !coopNameInput.value) coopNameInput.value = localStorage.getItem("toytank.name") ?? "";
+}
+// 現在の名前を確定して保存する。
+function commitCoopName(): void {
+  myCoopName = readCoopName();
+  if (myCoopName) localStorage.setItem("toytank.name", myCoopName);
+}
 
 // ロビー画面のパネル（選択／ホスト待機／ゲスト入室／接続OK）を出し分ける。
 function coopPanel(id: "choose" | "host" | "join" | "ready"): void {
@@ -362,6 +378,7 @@ function openCoop(prefillCode?: string): void {
   demoOff();
   closeRelay();
   showScreen("coop");
+  prefillCoopName(); // 前回の名前を復元
   const status = document.getElementById("coop-join-status");
   if (status) status.textContent = "";
   if (prefillCode) {
@@ -427,10 +444,13 @@ function startCoopGame(role: "host" | "guest", stage: StageData): void {
     g.onSnapshot = (snap) => relay?.send(snap); // 盤面を相手へ送る
     g.onInput = null;
     g.startCoopHost(stage);
+    g.setPlayerName(0, myCoopName); // 自分=P1
   } else {
     g.onSnapshot = null;
     g.onInput = (msg) => relay?.send(msg); // 自分の操作をホストへ送る
     g.startCoopGuest(stage);
+    g.setPlayerName(1, myCoopName); // 自分=P2（即時表示用。スナップショットでも上書き）
+    relay?.send({ t: "name", name: myCoopName }); // 名前をホストへ通知
   }
   setStatus("Co-op プレイ中");
   enterGame();
@@ -455,6 +475,8 @@ function onCoopGameMessage(data: unknown): void {
     game?.applyRemoteInput(
       data as { ax: number; ay: number; aim: [number, number] | null; fires?: [number, number][]; mines?: number },
     );
+  } else if (msg.t === "name") {
+    game?.setPlayerName(1, (data as { name: string }).name); // ホスト：ゲスト(P2)の名前を受信
   }
 }
 
@@ -476,6 +498,7 @@ function newRelay(): RelayClient {
 }
 
 document.getElementById("coop-create")?.addEventListener("click", () => {
+  commitCoopName();
   closeRelay();
   relay = newRelay();
   const el = document.getElementById("coop-code");
@@ -503,6 +526,7 @@ function coopJoinGo(): void {
     coopJoinStatus("4文字の合言葉を入力してください");
     return;
   }
+  commitCoopName();
   closeRelay();
   relay = newRelay();
   coopJoinStatus("接続中…");

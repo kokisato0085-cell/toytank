@@ -438,7 +438,7 @@ function startCoopGame(role: "host" | "guest", stage: StageData): void {
 
 // ホストが「ゲーム開始」を押した：ステージを相手へ送り、両者でゲーム開始。
 function coopHostStart(): void {
-  const stage = campaignStages()[0]; // MVP：まず1面
+  const stage = campaignStages()[2]; // MVP：まず1面（移動する敵がいる面で動作確認。将来はP2配置済みの各面へ）
   relay?.send({ t: "start", stage });
   startCoopGame("host", stage);
 }

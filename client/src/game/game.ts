@@ -345,12 +345,6 @@ export class Game {
   private set wasMoving(v: boolean) {
     this.players[this.localId].wasMoving = v;
   }
-  private get playerIdleTime(): number {
-    return this.players[this.localId].idleTime;
-  }
-  private set playerIdleTime(v: number) {
-    this.players[this.localId].idleTime = v;
-  }
 
   constructor(private canvas: HTMLCanvasElement, private stage: StageData) {
     const ctx = canvas.getContext("2d");
@@ -1405,11 +1399,27 @@ export class Game {
     return true;
   }
 
+  // 敵が狙うプレイヤー＝最も近い「生存」プレイヤー（ソロ=P1。Co-opで死者は除外）。
+  private enemyTarget(e: Enemy): Player {
+    let best = this.players[0];
+    let bd = Infinity;
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const d = this.dist(e.x, e.y, p.pos.x, p.pos.y);
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best; // 全員死亡時は players[0]（その場合 updateEnemies は呼ばれない想定＝安全側）
+  }
+
   private updateEnemies(dt: number): void {
     this.enemyMoving = false; // 毎フレーム集計し直す（走行音用）
     for (const e of this.enemies) {
       const t = e.type;
-      const near = this.dist(e.x, e.y, this.pos.x, this.pos.y) < ENEMY_NEAR;
+      const tgt = this.enemyTarget(e); // 最も近い生存プレイヤーを標的にする（Co-op）
+      const near = this.dist(e.x, e.y, tgt.pos.x, tgt.pos.y) < ENEMY_NEAR;
 
       // 透明タイプ：CLOAK_TIME 経過の瞬間に煙を出して消える
       const prevAge = e.age;
@@ -1426,15 +1436,15 @@ export class Game {
         if (!dodged) {
         e.behaviorTimer -= dt;
         if (e.behaviorTimer <= 0) this.pickBehavior(e);
-        const dx = this.pos.x - e.x;
-        const dy = this.pos.y - e.y;
+        const dx = tgt.pos.x - e.x;
+        const dy = tgt.pos.y - e.y;
         const d = Math.hypot(dx, dy);
         let behavior = e.behavior;
         const defensiveType = e.type.behavior === "balanced" || e.type.behavior === "kite";
         if (behavior === "combat" && defensiveType) {
           // 壁越しには突っ込まない：射線が壁で切れていて、かなり近くなければ守備的（退避）に
           // ※攻撃的タイプ(approach/chaser)は退かず、回り込みで追い続ける
-          if (d > ENEMY_CLOSE && !lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) behavior = "retreat";
+          if (d > ENEMY_CLOSE && !lineClear(this.stage, e.x, e.y, tgt.pos.x, tgt.pos.y)) behavior = "retreat";
         } else if (behavior === "retreat" && d > ENEMY_NEAR * 1.5) {
           behavior = "wander"; // 遠すぎる退避は徘徊に（端へ逃げ続けない）
         }
@@ -1445,7 +1455,7 @@ export class Game {
         let tcol: number;
         let trow: number;
         // 角待ち（自機が一定時間動かない）なら、円内でも詰める／回り込むのを許可
-        const camping = this.playerIdleTime >= ENEMY_STANDOFF_BREAK;
+        const camping = tgt.idleTime >= ENEMY_STANDOFF_BREAK;
         if (d < ENEMY_STANDOFF && !camping) {
           // プレイヤー周囲の円内：詰めない・止まらない・厳密な距離保持もしない＝適当に徘徊する
           if (e.wdCol < 0 || (ecol === e.wdCol && erow === e.wdRow)) this.pickWanderDest(e);
@@ -1460,8 +1470,8 @@ export class Game {
           tcol = e.wdCol;
           trow = e.wdRow;
         } else {
-          tcol = Math.floor(this.pos.x / cell);
-          trow = Math.floor(this.pos.y / cell);
+          tcol = Math.floor(tgt.pos.x / cell);
+          trow = Math.floor(tgt.pos.y / cell);
         }
         // BFSで目的セルへの「次の一歩」を求めて回り込む（0.3秒ごと再計算）＝壁を正確に避ける
         e.pathTimer -= dt;
@@ -1518,15 +1528,15 @@ export class Game {
         } // end if(!dodged)
       }
       // 射線が通っている時だけ砲塔を自機へ向ける（射撃の構え）
-      if (lineClear(this.stage, e.x, e.y, this.pos.x, this.pos.y)) {
-        e.facing = Math.atan2(this.pos.y - e.y, this.pos.x - e.x);
+      if (lineClear(this.stage, e.x, e.y, tgt.pos.x, tgt.pos.y)) {
+        e.facing = Math.atan2(tgt.pos.y - e.y, tgt.pos.x - e.x);
       }
 
       // 射撃：自機が近いほど発射間隔を短く。タイプ設定（バンク/精度/弾速/反射/連射）に従う
       const fireInterval = near ? t.fireInterval * NEAR_FIRE_MULT : t.fireInterval;
       e.cd -= dt;
       if (e.cd <= 0 && e.burstLeft <= 0) {
-        const dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank, t.bounces);
+        const dir = computeAimDir(this.stage, e.x, e.y, tgt.pos.x, tgt.pos.y, t.bank, t.bounces);
         if (dir && !this.allyInLineOfFire(e, dir)) {
           if (t.salvo && t.bullets > 1) {
             // 砲台複数門：扇状に同時発射（同じグループ＝互いに相殺しない）
@@ -1556,7 +1566,7 @@ export class Game {
       if (e.burstLeft > 0) {
         e.burstTimer -= dt;
         if (e.burstTimer <= 0) {
-          let dir = computeAimDir(this.stage, e.x, e.y, this.pos.x, this.pos.y, t.bank, t.bounces);
+          let dir = computeAimDir(this.stage, e.x, e.y, tgt.pos.x, tgt.pos.y, t.bank, t.bounces);
           if (dir && !this.allyInLineOfFire(e, dir)) {
             if (t.aimJitter > 0) dir = rotate(dir, (Math.random() * 2 - 1) * t.aimJitter);
             this.bulletGroup++;

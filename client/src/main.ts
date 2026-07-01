@@ -451,7 +451,10 @@ function onCoopGameMessage(data: unknown): void {
   } else if (msg.t === "snapshot") {
     game?.applySnapshot(data as Snapshot); // ゲスト：盤面を受信
   } else if (msg.t === "input") {
-    game?.applyRemoteInput(data as { ax: number; ay: number; aim: [number, number] | null }); // ホスト：ゲストの操作を受信
+    // ホスト：ゲストの操作（移動/照準/発射/地雷）を受信
+    game?.applyRemoteInput(
+      data as { ax: number; ay: number; aim: [number, number] | null; fires?: [number, number][]; mines?: number },
+    );
   }
 }
 

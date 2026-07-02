@@ -1181,7 +1181,9 @@ export class Game {
 
   // 指定プレイヤーの位置に地雷を設置（プレイヤーの地雷は owner=null）。
   private layMineFrom(p: Player): void {
-    if (this.mines.filter((m) => m.owner === null).length >= MAX_MINES) return;
+    // 上限はプレイヤーごと（by＝置いた人）。従来は owner===null で全プレイヤー共有になり、
+    // ホストが2個置くとゲストが置けなくなっていた（Co-op不具合）。
+    if (this.mines.filter((m) => m.by === p.id).length >= MAX_MINES) return;
     this.mines.push({ x: p.pos.x, y: p.pos.y, t: 0, owner: null, by: p.id });
     this.sfx("mine", { volume: 0.5 }); // 地雷設置音
   }

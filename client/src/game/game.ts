@@ -232,6 +232,7 @@ export interface Snapshot {
   ka: number[]; // プレイヤーIDごとの「味方に倒された」数
   nt: string; // 撃破メッセージ（味方の攻撃/自爆。空=非表示）
   sfx: { n: string; v: number }[]; // この間隔に鳴った効果音（ゲストが受信時に再生）
+  brk: [number, number][]; // この間隔に壊れた壊せる壁のセル（ゲストがタイルを床に）
   players: { id: number; x: number; y: number; h: number; f: number; alive: boolean; n: string }[];
   enemies: { x: number; y: number; b: number; f: number; k: string; hp: number; cl: boolean }[]; // k=タイプキー, cl=透明化中
   bullets: { x: number; y: number; vx: number; vy: number; o: number }[];
@@ -286,6 +287,7 @@ export class Game {
   coopRole: "host" | "guest" | null = null;
   private guestBgm = false; // ゲスト：BGMが鳴っているか（状態に追従して止め/再開する）
   private sfxQueue: { n: string; v: number }[] = []; // host：この間隔に鳴った効果音（スナップショットでゲストへ配る）
+  private brickQueue: [number, number][] = []; // host：この間隔に壊れた壊せる壁のセル（ゲストへ配る）
   onSnapshot: ((snap: Snapshot) => void) | null = null; // host が送信に使う
   private snapAcc = 0; // スナップショット送信レート制御
   private snapBuf: { time: number; snap: Snapshot }[] = []; // ゲストの受信バッファ（補間用）
@@ -544,6 +546,22 @@ export class Game {
     this.remoteMines = 0;
     this.pendingGameOver = false;
     this.sfxQueue = [];
+    this.brickQueue = [];
+    this.beginStage("Co-op");
+  }
+
+  // Co-op：キャンペーンの次ステージへ進む（撃破/集計は面をまたいで累積＝残機/統計をリセットしない）。
+  coopNextStage(stage: StageData): void {
+    this.loadStage(stage, false); // 壁・敵は新ステージ、killsBy等は維持（coopRole は null に戻る）
+    this.coopRole = "host";
+    this.localId = 0;
+    this.players = this.coopSpawns(stage);
+    this.remoteInput = { axis: { x: 0, y: 0 }, aim: null };
+    this.remoteFires = [];
+    this.remoteMines = 0;
+    this.pendingGameOver = false;
+    this.brickQueue = [];
+    startBgm(0.2); // 次ステージはBGMを頭から
     this.beginStage("Co-op");
   }
 
@@ -573,6 +591,7 @@ export class Game {
       ka: this.killedByAlly,
       nt: this.notice,
       sfx: this.sfxQueue.splice(0), // 溜まった効果音を送って空にする
+      brk: this.brickQueue.splice(0), // 壊れた壁を送って空にする
 
       players: this.players.map((p) => ({ id: p.id, x: p.pos.x, y: p.pos.y, h: p.heading, f: p.facing, alive: p.alive, n: this.playerName(p.id) })),
       enemies: this.enemies.map((e) => ({
@@ -592,6 +611,8 @@ export class Game {
     this.snapBuf.push({ time: performance.now(), snap });
     // 効果音は「受信した時に一度だけ」鳴らす（補間フレームごとの重複を避ける）。
     if (snap.sfx) for (const s of snap.sfx) playSound(s.n as SoundName, { volume: s.v, throttleMs: 40 });
+    // 壊れた壁を床にする（テクスチャを消す）。
+    if (snap.brk) for (const [c, r] of snap.brk) this.stage.tiles[r][c] = TILE.FLOOR;
     // 古いものは捨てる（補間に使う直近2枚＋余裕があれば十分）。
     const cutoff = performance.now() - 1000;
     while (this.snapBuf.length > 2 && this.snapBuf[0].time < cutoff) this.snapBuf.shift();
@@ -1239,7 +1260,10 @@ export class Game {
         return true;
       });
       // 3) 最後にブロックを破壊（↑の判定には影響させない）
-      for (const [c, r] of bricks) this.stage.tiles[r][c] = TILE.FLOOR;
+      for (const [c, r] of bricks) {
+        this.stage.tiles[r][c] = TILE.FLOOR;
+        if (this.coopRole === "host") this.brickQueue.push([c, r]); // 壊れた壁をゲストへ配る
+      }
       if (this.tutorial && bricks.length) this.tutBrickBroken = true; // 地雷ステップの達成
     }
     this.mines = this.mines.filter((_, j) => !det.has(j));

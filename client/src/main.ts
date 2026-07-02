@@ -54,6 +54,15 @@ function bootGame(stage: StageData): Game {
     const g = new Game(canvas!, stage);
     g.setInputMode(ctrlMode);
     g.onStageClear = () => {
+      if (g.coopRole === "host") {
+        // Co-op キャンペーン：次ステージを相手へ送って進む。最終面クリアはそのまま全クリアへ。
+        idx++;
+        if (idx < campaign.length) {
+          relay?.send({ t: "start", stage: campaign[idx] });
+          g.coopNextStage(campaign[idx]);
+        }
+        return;
+      }
       if (!campaignMode) return; // 自作の単発は1面クリアで全クリア（"CLEAR!"のまま）
       idx++;
       if (idx < campaign.length) {
@@ -472,11 +481,10 @@ function showCoopReady(): void {
 }
 
 // ホスト/ゲスト共通の Co-op ゲーム開始。
+// ※ campaign/idx はホスト側でキャンペーン進行に使うため、coopHostStart で設定する（ここでは触らない）。
 function startCoopGame(role: "host" | "guest", stage: StageData): void {
   demoOff();
-  campaign = [stage];
-  campaignMode = false; // Co-op はキャンペーン進行に乗せない
-  idx = 0;
+  campaignMode = false;
   const g = bootGame(stage);
   if (role === "host") {
     g.onSnapshot = (snap) => relay?.send(snap); // 盤面を相手へ送る
@@ -493,11 +501,12 @@ function startCoopGame(role: "host" | "guest", stage: StageData): void {
   enterGame();
 }
 
-// ホストが「ゲーム開始」を押した：ステージを相手へ送り、両者でゲーム開始。
+// ホストが「ゲーム開始」を押した：全20面キャンペーンを1面から開始し、相手へ送る。
 function coopHostStart(): void {
-  const stage = campaignStages()[2]; // MVP：まず1面（移動する敵がいる面で動作確認。将来はP2配置済みの各面へ）
-  relay?.send({ t: "start", stage });
-  startCoopGame("host", stage);
+  campaign = campaignStages(); // 全20面（P2未設定は隣に自動配置）
+  idx = 0;
+  relay?.send({ t: "start", stage: campaign[0] });
+  startCoopGame("host", campaign[0]);
 }
 
 // 相手（ホスト）から届いたゲームメッセージ（開始通知・スナップショット）。
@@ -604,7 +613,9 @@ function restart(): void {
   if (game.coopRole === "guest") return; // Co-op のゲストはホストの操作に従う（自分では再開しない）
   if (game.coopRole === "host") {
     hideResult();
-    game.restartCoop(campaign[0]); // 全滅リザルト→もう一度：同ステージを最初から（統計もリセット）
+    idx = 0; // 「もう一度」は常に1面から（全滅・全クリアとも）。統計もリセット。
+    relay?.send({ t: "start", stage: campaign[0] });
+    game.restartCoop(campaign[0]);
     updateGameActive();
     return;
   }

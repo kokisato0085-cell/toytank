@@ -77,6 +77,19 @@
         color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
       }
       .coop-ok { font-size: 24px; font-weight: 800; color: var(--accent); margin-top: 16px; }
+      /* ロビーの参加者ボックス */
+      #coop-roster {
+        max-width: 300px; margin: 16px auto 0; text-align: left;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+      }
+      #coop-roster .roster-h {
+        font-size: 13px; font-weight: 700; color: var(--muted);
+        padding: 8px 12px; background: var(--panel2); border-bottom: 1px solid var(--line);
+      }
+      #coop-roster .roster-row { font-size: 15px; padding: 8px 12px; border-top: 1px solid var(--line); }
+      #coop-roster .roster-row:first-of-type { border-top: none; }
+      #coop-roster .roster-row.empty { color: var(--muted); }
+      #coop-roster .roster-host { font-size: 12px; color: var(--accent); }
       #coop-join-status { min-height: 18px; color: #ff8080; }
 
       .back, .gamebar button, .gamebar select, #pc-panel button, #custom-list button, #set-fullscreen {
@@ -310,6 +323,9 @@
         <p id="coop-wait" class="muted-note" style="display: none;">ホストの開始を待っています…</p>
         <button class="back" data-action="title">← タイトルへ戻る</button>
       </div>
+
+      <!-- 参加者ボックス（部屋作成後の待機〜開始前に表示。JSが中身を組み立てる）-->
+      <div id="coop-roster" style="display: none;"></div>
     </section>
 
     <!-- ===== ゲーム ===== -->

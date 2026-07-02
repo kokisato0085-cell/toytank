@@ -343,6 +343,37 @@ document.getElementById("gear-skip")?.addEventListener("click", () => backToTitl
 // ---- Co-op マルチ（ロビー。BasicDesign §12-b）----
 let relay: RelayClient | null = null;
 let myCoopName = ""; // 自分の表示名（部屋作成/参加時に確定）
+let coopRoster: { id: number; name: string }[] = []; // ロビーの参加者名簿（ホストが権威・配布）
+const COOP_MAX_PLAYERS = 4; // 参加者ボックスのスロット数（将来のE=最大4人に備える・小12-6）
+
+// ロビーの参加者ボックスを描画（名前は textContent で安全に）。
+function renderRoster(): void {
+  const box = document.getElementById("coop-roster");
+  if (!box) return;
+  box.innerHTML = "";
+  const h = document.createElement("div");
+  h.className = "roster-h";
+  h.textContent = `参加者 (${coopRoster.length}/${COOP_MAX_PLAYERS})`;
+  box.appendChild(h);
+  for (let i = 0; i < COOP_MAX_PLAYERS; i++) {
+    const p = coopRoster.find((r) => r.id === i);
+    const row = document.createElement("div");
+    if (p) {
+      row.className = "roster-row";
+      row.textContent = `${i + 1}. ${p.name}`;
+      if (i === 0) {
+        const s = document.createElement("span");
+        s.className = "roster-host";
+        s.textContent = "  (ホスト)";
+        row.appendChild(s);
+      }
+    } else {
+      row.className = "roster-row empty";
+      row.textContent = `${i + 1}. （空き）`;
+    }
+    box.appendChild(row);
+  }
+}
 
 const coopNameInput = document.getElementById("coop-name") as HTMLInputElement | null;
 // 名前欄の値を取り出す（前後空白除去・最大10文字）。
@@ -365,11 +396,15 @@ function coopPanel(id: "choose" | "host" | "join" | "ready"): void {
     const el = document.getElementById(`coop-${p}`);
     if (el) el.style.display = p === id ? "block" : "none";
   }
+  // 参加者ボックスは「部屋作成後の待機」「開始前」だけ表示。
+  const roster = document.getElementById("coop-roster");
+  if (roster) roster.style.display = id === "host" || id === "ready" ? "block" : "none";
 }
 
 function closeRelay(): void {
   relay?.close();
   relay = null;
+  coopRoster = [];
 }
 
 // Co-op 画面を開く。prefillCode があれば入室パネルに合言葉を入れた状態にする（?room= 用）。
@@ -404,7 +439,10 @@ function onCoopLobby(m: LobbyMsg): void {
       coopPanel("host");
       break;
     }
-    case "joined": // ゲスト：入室成功（相手＝ホストは既にいる）
+    case "joined": // ゲスト：入室成功 → 名前をホストへ送る（ロビーの名簿用）
+      relay?.send({ t: "name", name: myCoopName });
+      showCoopReady();
+      break;
     case "peer-joined": // ホスト：相手が入った
       showCoopReady(); // 2人そろった → ホストは「ゲーム開始」、ゲストは待機
       break;
@@ -444,13 +482,12 @@ function startCoopGame(role: "host" | "guest", stage: StageData): void {
     g.onSnapshot = (snap) => relay?.send(snap); // 盤面を相手へ送る
     g.onInput = null;
     g.startCoopHost(stage);
-    g.setPlayerName(0, myCoopName); // 自分=P1
+    for (const r of coopRoster) g.setPlayerName(r.id, r.name); // ロビーの名簿を反映
   } else {
     g.onSnapshot = null;
     g.onInput = (msg) => relay?.send(msg); // 自分の操作をホストへ送る
     g.startCoopGuest(stage);
-    g.setPlayerName(1, myCoopName); // 自分=P2（即時表示用。スナップショットでも上書き）
-    relay?.send({ t: "name", name: myCoopName }); // 名前をホストへ通知
+    // 名前はスナップショット(players[].n)で受信するのでここでは設定不要
   }
   setStatus("Co-op プレイ中");
   enterGame();
@@ -476,7 +513,17 @@ function onCoopGameMessage(data: unknown): void {
       data as { ax: number; ay: number; aim: [number, number] | null; fires?: [number, number][]; mines?: number },
     );
   } else if (msg.t === "name") {
-    game?.setPlayerName(1, (data as { name: string }).name); // ホスト：ゲスト(P2)の名前を受信
+    // ホスト：ゲストの名前を受信 → 名簿へ（当面ゲストはid=1）→ ゲームにも反映 → 全員へ配布
+    const gid = 1;
+    const name = (data as { name: string }).name || `Player${gid + 1}`;
+    coopRoster = coopRoster.filter((r) => r.id !== gid).concat({ id: gid, name }).sort((a, b) => a.id - b.id);
+    renderRoster();
+    game?.setPlayerName(gid, name);
+    relay?.send({ t: "roster", players: coopRoster });
+  } else if (msg.t === "roster") {
+    // ゲスト：名簿を受信して参加者ボックスを更新
+    coopRoster = (data as { players: { id: number; name: string }[] }).players;
+    renderRoster();
   }
 }
 
@@ -500,6 +547,8 @@ function newRelay(): RelayClient {
 document.getElementById("coop-create")?.addEventListener("click", () => {
   commitCoopName();
   closeRelay();
+  coopRoster = [{ id: 0, name: myCoopName || "Player1" }]; // ホスト＝id0
+  renderRoster();
   relay = newRelay();
   const el = document.getElementById("coop-code");
   if (el) el.textContent = "····";

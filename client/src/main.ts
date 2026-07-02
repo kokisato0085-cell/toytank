@@ -335,7 +335,7 @@ document.addEventListener("fullscreenchange", () => {
 });
 
 // ---- ゲーム画面のボタン ----
-document.getElementById("btn-mine")?.addEventListener("click", () => game?.layMine());
+document.getElementById("btn-mine")?.addEventListener("click", () => game?.requestMine());
 // チュートリアルのスキップ（⚙設定タブ／⚙ギアメニューの中。tutorial-active の時だけ表示）
 document.getElementById("pc-skip")?.addEventListener("click", () => backToTitle());
 document.getElementById("gear-skip")?.addEventListener("click", () => backToTitle());
@@ -620,7 +620,7 @@ document.getElementById("gear-fullscreen")?.addEventListener("click", () => {
 // 💣はドラッグ移動中でも反応するよう pointerdown で即時発火（click はマルチタッチ中に抑制されがち）
 document.getElementById("mobile-mine")?.addEventListener("pointerdown", (e) => {
   e.preventDefault();
-  game?.layMine();
+  game?.requestMine();
 });
 document.getElementById("result-restart")?.addEventListener("click", () => restart());
 document.getElementById("result-title")?.addEventListener("click", () => backToTitle());

@@ -1168,9 +1168,15 @@ export class Game {
     }
   }
 
-  // 地雷を設置（最大 MAX_MINES）。外部ボタン(💣/E)からはローカル機が設置。
+  // 地雷を設置（最大 MAX_MINES）。デモ等の内部用。ローカル機が直接設置する。
   layMine(): void {
     this.layMineFrom(this.players[this.localId]);
+  }
+
+  // 💣ボタン用：地雷の設置“リクエスト”を入力に積む（Eキーと同じ経路）。
+  // ホストは update の takeMines で設置、ゲストは sendGuestInput でホストへ送る。
+  requestMine(): void {
+    this.input.requestMine();
   }
 
   // 指定プレイヤーの位置に地雷を設置（プレイヤーの地雷は owner=null）。

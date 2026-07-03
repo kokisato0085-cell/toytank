@@ -416,6 +416,25 @@ function closeRelay(): void {
   coopRoster = [];
 }
 
+// 非ブロッキングの通知トースト（数秒で自動的に消える）。
+let toastTimer: number | undefined;
+function showToast(msg: string): void {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => el.classList.remove("show"), 3500);
+}
+
+// Co-op が切断で終了したときの統一処理（相手退出・自分側切断・回線断）。多重発火は無視。
+function coopEnded(msg: string): void {
+  if (!relay) return; // 既に終了済み
+  closeRelay();
+  backToTitle();
+  showToast(msg);
+}
+
 // Co-op 画面を開く。prefillCode があれば入室パネルに合言葉を入れた状態にする（?room= 用）。
 function openCoop(prefillCode?: string): void {
   game?.pause();
@@ -456,9 +475,7 @@ function onCoopLobby(m: LobbyMsg): void {
       showCoopReady(); // 2人そろった → ホストは「ゲーム開始」、ゲストは待機
       break;
     case "peer-left":
-      closeRelay();
-      alert("相手の接続が切れました");
-      backToTitle();
+      coopEnded("相手の接続が切れました");
       break;
     case "error":
       if (m.reason === "notfound") coopJoinStatus("その合言葉の部屋が見つかりません");
@@ -541,14 +558,18 @@ function newRelay(): RelayClient {
   r.onLobby = onCoopLobby;
   r.onGameMessage = onCoopGameMessage;
   r.onError = () => {
+    if (onGameScreen()) {
+      coopEnded("接続エラーで切断しました");
+      return;
+    }
+    // 接続/入室フェーズの失敗
     coopJoinStatus("リレーサーバーに接続できません（起動していない可能性）");
     coopPanel("join");
     closeRelay();
   };
   r.onClose = () => {
-    // 予期せぬ切断（peer-left は上で処理済み＝こちらからclose済みなので来ない）
-    if (!onGameScreen()) coopJoinStatus("接続が切れました");
-    relay = null;
+    // 予期せぬ切断（相手退出は peer-left で処理済み＝こちらからclose済みなので来ない）
+    coopEnded("接続が切れました");
   };
   return r;
 }

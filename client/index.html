@@ -179,6 +179,15 @@
         align-items: center; justify-content: center; text-align: center;
         font-size: 22px; line-height: 1.8;
       }
+      /* 通知トースト（切断など）*/
+      #toast {
+        position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(20px);
+        z-index: 60; max-width: 90vw; padding: 12px 18px; border-radius: 10px;
+        background: rgba(20, 24, 30, 0.95); color: #fff; border: 1px solid var(--line);
+        font-size: 15px; text-align: center; opacity: 0; pointer-events: none;
+        transition: opacity 0.25s, transform 0.25s;
+      }
+      #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
       /* スマホ没入時の操作（ギア＝右上メニュー / 💣＝下中央）。没入時のみ表示 */
       #mobile-controls { display: none; }
@@ -390,6 +399,9 @@
     <!-- スマホ縦持ち時の回転案内。どの画面でも前面に出せるよう body 直下に置く
          （#screen-game の中だとタイトル表示中=display:none で出せないため）-->
     <div id="rotate-hint">📱<br />端末を <b>横向き</b> にしてください</div>
+
+    <!-- 通知トースト（切断など。非ブロッキングで数秒表示）-->
+    <div id="toast"></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

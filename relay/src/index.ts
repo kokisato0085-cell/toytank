@@ -1,11 +1,19 @@
-// ToyTank 段階2 Co-op の「部屋＝リレー」サーバー（BasicDesign §12-a/b/f）。
+// ToyTank 段階2 Co-op の「部屋＝リレー」サーバー（BasicDesign §12-a/b/f/l）。
 // Cloudflare Workers + Durable Objects。1部屋 = RoomDO 1インスタンス。
-// host/guest の2本の WebSocket を保持し、相手へメッセージを「そのまま中継」する（simは持たない）。
-// ロビー制御（created/joined/peer-joined/peer-left/error）だけ DO が生成する。
+// host 1本＋guest 最大3本の WebSocket を保持し、メッセージを「そのまま中継」する（simは持たない）。
+//   ・host → 全ゲストへブロードキャスト
+//   ・各ゲスト → host のみ（ゲスト同士は直接通信しない＝ホスト権威）
+// ロビー制御（created/joined(+id)/peer-joined(+id)/peer-left(+id)/error）だけ DO が生成する。
+// ゲストにはスロットid（1〜3）を割り当て、joined.id で本人へ・peer-joined.id でホストへ通知する。
+
+import { nextFreeSlot } from "./slot";
 
 export interface Env {
   ROOM: DurableObjectNamespace;
 }
+
+// 協力の最大ゲスト数（host id0 ＋ guest id1〜3 ＝ 最大4人。小12-6）。
+const MAX_GUESTS = 3;
 
 // 合言葉の文字種：紛らわしい文字（0/O/1/I）を除いた英数字。
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -55,12 +63,29 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 // 部屋本体。WebSocket Hibernation API を使い、待機中は無課金で接続を保持する。
-// host/guest の区別は acceptWebSocket のタグで持ち、ハイバネーション復帰後も getWebSockets(tag) で取り戻せる。
+// host/guest の区別・ゲストのスロットidは acceptWebSocket のタグで持つ（`host` / `guest` / `s1`〜`s3`）。
+// ハイバネーション復帰後も getWebSockets(tag) / getTags(ws) で取り戻せる。
 export class RoomDO implements DurableObject {
   constructor(private state: DurableObjectState) {}
 
   private peers(tag: "host" | "guest"): WebSocket[] {
     return this.state.getWebSockets(tag);
+  }
+
+  // ゲストWSに割り当てられたスロットid（1〜3）をタグから取り出す。
+  private slotOf(ws: WebSocket): number {
+    for (const t of this.state.getTags(ws)) {
+      if (t[0] === "s") {
+        const n = Number(t.slice(1));
+        if (n >= 1) return n;
+      }
+    }
+    return -1;
+  }
+
+  // 空いている最小のスロット（1〜MAX_GUESTS）。満室なら -1。
+  private freeSlot(guests: WebSocket[]): number {
+    return nextFreeSlot(guests.map((g) => this.slotOf(g)), MAX_GUESTS);
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -79,13 +104,14 @@ export class RoomDO implements DurableObject {
       if (hosts.length > 0) return this.reject(client, server, "full"); // 合言葉衝突など（稀）
       this.state.acceptWebSocket(server, ["host"]);
       send(server, { t: "created", code });
-      if (guests.length > 0) send(server, { t: "peer-joined" });
+      for (const g of guests) send(server, { t: "peer-joined", id: this.slotOf(g) }); // 既存ゲスト（稀）
     } else if (role === "guest") {
       if (hosts.length === 0) return this.reject(client, server, "notfound");
-      if (guests.length > 0) return this.reject(client, server, "full");
-      this.state.acceptWebSocket(server, ["guest"]);
-      send(server, { t: "joined", code });
-      for (const h of hosts) send(h, { t: "peer-joined" });
+      const slot = this.freeSlot(guests);
+      if (slot < 0) return this.reject(client, server, "full");
+      this.state.acceptWebSocket(server, ["guest", `s${slot}`]);
+      send(server, { t: "joined", code, id: slot });
+      for (const h of hosts) send(h, { t: "peer-joined", id: slot });
     } else {
       return this.reject(client, server, "badrole");
     }
@@ -93,10 +119,10 @@ export class RoomDO implements DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // 一方の peer から来たメッセージを、もう一方へそのまま中継する。
+  // host からのメッセージ → 全ゲストへブロードキャスト。ゲストからのメッセージ → host のみ。
   webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer): void {
     const isHost = this.peers("host").includes(ws);
-    const targets = this.peers(isHost ? "guest" : "host");
+    const targets = isHost ? this.peers("guest") : this.peers("host");
     for (const t of targets) {
       try {
         t.send(msg);
@@ -108,14 +134,20 @@ export class RoomDO implements DurableObject {
 
   webSocketClose(ws: WebSocket): void {
     const isHost = this.peers("host").includes(ws);
-    const others = this.peers(isHost ? "guest" : "host");
-    for (const o of others) {
-      send(o, { t: "peer-left" });
-      try {
-        o.close(1000, "peer-left"); // 片方が抜けたら相手も終了（中12-f）
-      } catch {
-        /* 無視 */
+    if (isHost) {
+      // ホスト離脱＝権威が消える → 全ゲストを終了させ部屋を閉じる（中12-f）。
+      for (const g of this.peers("guest")) {
+        send(g, { t: "peer-left", host: true });
+        try {
+          g.close(1000, "host-left");
+        } catch {
+          /* 無視 */
+        }
       }
+    } else {
+      // ゲスト離脱＝そのプレイヤーのみ退場 → ホストへ id を通知（他ゲストは巻き込まない・中12-f）。
+      const slot = this.slotOf(ws);
+      for (const h of this.peers("host")) send(h, { t: "peer-left", id: slot });
     }
     try {
       ws.close();

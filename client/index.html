@@ -82,6 +82,13 @@
         max-width: 300px; margin: 16px auto 0; text-align: left;
         background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
       }
+      #coop-roster .roster-code {
+        text-align: center; padding: 10px 12px; background: var(--panel2); border-bottom: 1px solid var(--line);
+      }
+      #coop-roster .roster-code-label { font-size: 12px; font-weight: 700; color: var(--muted); display: block; }
+      #coop-roster .roster-code-val {
+        font-size: 30px; font-weight: 800; letter-spacing: 8px; color: var(--accent); user-select: all;
+      }
       #coop-roster .roster-h {
         font-size: 13px; font-weight: 700; color: var(--muted);
         padding: 8px 12px; background: var(--panel2); border-bottom: 1px solid var(--line);
@@ -325,7 +332,7 @@
 
       <!-- D: 2人そろった → ホストは開始ボタン、ゲストは待機 -->
       <div id="coop-ready" class="coop-panel" style="display: none;">
-        <p class="coop-ok">2人そろいました！</p>
+        <p class="coop-ok">接続できました！</p>
         <div class="menu">
           <button id="coop-start" style="display: none;">ゲーム開始</button>
         </div>

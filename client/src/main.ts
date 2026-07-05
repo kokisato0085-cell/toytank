@@ -360,6 +360,20 @@ function renderRoster(): void {
   const box = document.getElementById("coop-roster");
   if (!box) return;
   box.innerHTML = "";
+  // 合言葉を一覧の先頭に常時表示（人数が増えて画面が進んでも招待できるように）。
+  const code = relay?.code ?? "";
+  if (code) {
+    const c = document.createElement("div");
+    c.className = "roster-code";
+    const label = document.createElement("span");
+    label.className = "roster-code-label";
+    label.textContent = "合言葉";
+    const val = document.createElement("span");
+    val.className = "roster-code-val";
+    val.textContent = code;
+    c.append(label, val);
+    box.appendChild(c);
+  }
   const h = document.createElement("div");
   h.className = "roster-h";
   h.textContent = `参加者 (${coopRoster.length}/${COOP_MAX_PLAYERS})`;
@@ -464,6 +478,7 @@ function onCoopLobby(m: LobbyMsg): void {
     case "created": {
       const el = document.getElementById("coop-code");
       if (el) el.textContent = m.code;
+      renderRoster(); // 参加者ボックスにも合言葉を反映（relay.code 確定後）
       coopPanel("host");
       break;
     }

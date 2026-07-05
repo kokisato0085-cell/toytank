@@ -467,19 +467,29 @@ function onCoopLobby(m: LobbyMsg): void {
       coopPanel("host");
       break;
     }
-    case "joined": // ゲスト：入室成功 → 名前をホストへ送る（ロビーの名簿用）
-      relay?.send({ t: "name", name: myCoopName });
+    case "joined": // ゲスト：入室成功 → 自分のid付きで名前をホストへ送る（ロビーの名簿用）
+      relay?.send({ t: "name", id: relay.myId, name: myCoopName });
       showCoopReady();
       break;
-    case "peer-joined": // ホスト：相手が入った
-      showCoopReady(); // 2人そろった → ホストは「ゲーム開始」、ゲストは待機
+    case "peer-joined": // ホスト：ゲストが入った（idはrelay割当）→ 名簿に仮枠を足して開始可否を更新
+      if (!coopRoster.some((r) => r.id === m.id)) {
+        coopRoster = coopRoster.concat({ id: m.id, name: "（接続中…）" }).sort((a, b) => a.id - b.id);
+      }
+      renderRoster();
+      relay?.send({ t: "roster", players: coopRoster });
+      showCoopReady();
       break;
     case "peer-left":
-      coopEnded("相手の接続が切れました");
+      if (m.host) {
+        // ゲスト：ホスト（権威）が抜けた → 全員終了（§12-f）
+        coopEnded("ホストの接続が切れました");
+      } else if (typeof m.id === "number") {
+        onGuestLeft(m.id); // ホスト：ゲスト1人が退場（ロビー＝空き枠／ゲーム中＝戦車撤去）
+      }
       break;
     case "error":
       if (m.reason === "notfound") coopJoinStatus("その合言葉の部屋が見つかりません");
-      else if (m.reason === "full") coopJoinStatus("満室です（すでに2人います）");
+      else if (m.reason === "full") coopJoinStatus("満室です（すでに4人います）");
       else coopJoinStatus("接続エラー");
       coopPanel("join");
       closeRelay();
@@ -487,13 +497,32 @@ function onCoopLobby(m: LobbyMsg): void {
   }
 }
 
-// 2人そろった画面：ホストは「ゲーム開始」、ゲストは待機表示。
+// ホスト：ゲスト1人が抜けたときの処理。ゲーム中はその戦車だけ撤去して続行、ロビー中は空き枠に戻す（§12-f）。
+function onGuestLeft(id: number): void {
+  const who = coopRoster.find((r) => r.id === id)?.name ?? `Player${id + 1}`;
+  coopRoster = coopRoster.filter((r) => r.id !== id);
+  if (onGameScreen()) {
+    game?.removeCoopPlayer(id);
+    showToast(`${who} が退出しました`);
+  } else {
+    renderRoster();
+    relay?.send({ t: "roster", players: coopRoster });
+    showCoopReady();
+  }
+}
+
+// 接続OK画面：ホストは「ゲーム開始」（2人以上で押せる・最大4人まで待てる）、ゲストは待機表示。
 function showCoopReady(): void {
   coopPanel("ready");
   const isHost = relay?.role === "host";
-  const startBtn = document.getElementById("coop-start");
+  const startBtn = document.getElementById("coop-start") as HTMLButtonElement | null;
   const wait = document.getElementById("coop-wait");
-  if (startBtn) startBtn.style.display = isHost ? "block" : "none";
+  if (startBtn) {
+    startBtn.style.display = isHost ? "block" : "none";
+    const ready = coopRoster.length >= 2; // ホスト＋ゲスト1人以上
+    startBtn.disabled = !ready;
+    startBtn.textContent = ready ? "ゲーム開始" : "参加者を待っています…";
+  }
   if (wait) wait.style.display = isHost ? "none" : "block";
 }
 
@@ -504,23 +533,24 @@ function startCoopGame(role: "host" | "guest", stage: StageData): void {
   campaignMode = false;
   const g = bootGame(stage);
   if (role === "host") {
-    g.onSnapshot = (snap) => relay?.send(snap); // 盤面を相手へ送る
+    g.onSnapshot = (snap) => relay?.send(snap); // 盤面を全ゲストへ送る（relayがブロードキャスト）
     g.onInput = null;
-    g.startCoopHost(stage);
+    g.startCoopHost(stage, coopRoster.map((r) => r.id)); // 参加者id（0＝ホスト＋各ゲスト）で開始
     for (const r of coopRoster) g.setPlayerName(r.id, r.name); // ロビーの名簿を反映
   } else {
     g.onSnapshot = null;
     g.onInput = (msg) => relay?.send(msg); // 自分の操作をホストへ送る
-    g.startCoopGuest(stage);
+    g.startCoopGuest(stage, relay?.myId ?? 1); // 自分のスロットidで開始
     // 名前はスナップショット(players[].n)で受信するのでここでは設定不要
   }
   setStatus("Co-op プレイ中");
   enterGame();
 }
 
-// ホストが「ゲーム開始」を押した：全20面キャンペーンを1面から開始し、相手へ送る。
+// ホストが「ゲーム開始」を押した：全20面キャンペーンを1面から開始し、全ゲストへ送る。
 function coopHostStart(): void {
-  campaign = campaignStages(); // 全20面（P2未設定は隣に自動配置）
+  if (coopRoster.length < 2) return; // 2人未満（ゲスト未参加）は開始しない
+  campaign = campaignStages(); // 全20面（P2〜P4未設定は隣に自動配置）
   idx = 0;
   relay?.send({ t: "start", stage: campaign[0] });
   startCoopGame("host", campaign[0]);
@@ -539,9 +569,10 @@ function onCoopGameMessage(data: unknown): void {
       data as { ax: number; ay: number; aim: [number, number] | null; fires?: [number, number][]; mines?: number },
     );
   } else if (msg.t === "name") {
-    // ホスト：ゲストの名前を受信 → 名簿へ（当面ゲストはid=1）→ ゲームにも反映 → 全員へ配布
-    const gid = 1;
-    const name = (data as { name: string }).name || `Player${gid + 1}`;
+    // ホスト：ゲストの名前を受信（送信元の自己申告id）→ 名簿へ → ゲームにも反映 → 全員へ配布
+    const nm = data as { id?: number; name?: string };
+    const gid = typeof nm.id === "number" && nm.id >= 1 ? nm.id : 1;
+    const name = nm.name || `Player${gid + 1}`;
     coopRoster = coopRoster.filter((r) => r.id !== gid).concat({ id: gid, name }).sort((a, b) => a.id - b.id);
     renderRoster();
     game?.setPlayerName(gid, name);

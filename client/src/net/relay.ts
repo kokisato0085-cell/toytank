@@ -6,11 +6,12 @@
 export type RelayRole = "host" | "guest";
 
 // サーバー（relay）が生成するロビー制御メッセージ。
+// id はゲストのスロット（1〜3）。host は id0 固定（メッセージには載らない）。
 export type LobbyMsg =
   | { t: "created"; code: string }
-  | { t: "joined"; code: string }
-  | { t: "peer-joined" }
-  | { t: "peer-left" }
+  | { t: "joined"; code: string; id: number } // 自分（ゲスト）の割当スロット
+  | { t: "peer-joined"; id: number } // ホスト：どのスロットのゲストが入ったか
+  | { t: "peer-left"; id?: number; host?: boolean } // id=退出ゲスト / host=ホスト離脱
   | { t: "error"; reason: string };
 
 const LOBBY_TYPES = new Set(["created", "joined", "peer-joined", "peer-left", "error"]);
@@ -27,6 +28,7 @@ export class RelayClient {
 
   role: RelayRole = "host";
   code = "";
+  myId = 0; // このクライアントのプレイヤーid（host=0 / guest=relay割当の1〜3）
 
   // コールバック（呼び出し側が差し替える）。
   onLobby: (m: LobbyMsg) => void = () => {};
@@ -63,6 +65,7 @@ export class RelayClient {
       if (t && LOBBY_TYPES.has(t)) {
         const m = data as LobbyMsg;
         if (m.t === "created" || m.t === "joined") this.code = m.code;
+        if (m.t === "joined") this.myId = m.id; // ゲスト：自分のスロットidを確定
         this.onLobby(m);
       } else {
         this.onGameMessage(data); // ゲームメッセージ（相手から中継されたもの）

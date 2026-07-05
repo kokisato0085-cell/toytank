@@ -13,6 +13,8 @@ export const COLORS = {
   line: "rgba(0,0,0,0.06)",
   p1: "#2d7dd2",
   p2: "#2a8a3e",
+  p3: "#e8a33d", // Co-op 3人目（琥珀）
+  p4: "#9b5de5", // Co-op 4人目（紫）
   stationary: "#c0392b",
   mover: "#e08020",
   barrel: "#222",

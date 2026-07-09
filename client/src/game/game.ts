@@ -101,7 +101,8 @@ const COOP_SPAWN_OFFSETS: [number, number][] = [
   [-COOP_P2_OFFSET, 0],
   [0, -COOP_P2_OFFSET],
 ];
-const INTERP_DELAY = 0.1; // ゲストの補間遅延（秒）＝この分だけ過去を描いて間を埋める（小12-3）
+const INTERP_DELAY = 0.15; // ゲストの補間遅延（秒）＝この分だけ過去を描いて間を埋める（小12-3）。
+// 実回線のジッタ吸収のため 0.1→0.15 に調整（3b 体感調整）。20Hz スナップ(50ms)に対し余裕2間隔ぶん。
 const INPUT_INTERVAL = 1 / 30; // ゲストの入力送信間隔（30Hz・小12-2）
 const OWNER_ENEMY = -1; // 弾の所有者：0..=プレイヤーID、-1=敵
 const NOTICE_DUR = 3; // 撃破メッセージの表示秒（§12-i）

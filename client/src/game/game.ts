@@ -104,6 +104,7 @@ const COOP_SPAWN_OFFSETS: [number, number][] = [
 const INTERP_DELAY = 0.15; // ゲストの補間遅延（秒）＝この分だけ過去を描いて間を埋める（小12-3）。
 // 実回線のジッタ吸収のため 0.1→0.15 に調整（3b 体感調整）。20Hz スナップ(50ms)に対し余裕2間隔ぶん。
 const INPUT_INTERVAL = 1 / 30; // ゲストの入力送信間隔（30Hz・小12-2）
+const SEPARATE_ITERS = 4; // 味方同士の押し出し（重なり解消）の反復回数（中8-e）
 const OWNER_ENEMY = -1; // 弾の所有者：0..=プレイヤーID、-1=敵
 const NOTICE_DUR = 3; // 撃破メッセージの表示秒（§12-i）
 
@@ -866,6 +867,7 @@ export class Game {
         const ny = p.pos.y + Math.sin(turn.moveDir) * step;
         const blocked = (px: number, py: number): boolean =>
           circleHitsSolid(this.stage, px, py, TANK_RADIUS) || this.hitsEnemy(px, py);
+        // 味方同士は移動をブロックせず、移動後に separatePlayers() で押し出す（中8-e）。
         p.pos = slide(p.pos.x, p.pos.y, nx, ny, blocked);
         this.stampTrack(p.pos.x, p.pos.y, p.heading, p.trackFrom);
         p.wasMoving = true;
@@ -1123,6 +1125,7 @@ export class Game {
         this.movePlayer(p, this.remoteFor(p.id).input, dt);
       }
     }
+    this.separatePlayers(); // 味方同士の重なりを押し出しで解消（中8-e・ソロは無影響）
 
     // 発射要求の処理
     if (this.demo) {
@@ -1930,11 +1933,15 @@ export class Game {
     this.state = "playing";
   }
 
-  // 移動型の敵が進めない位置か：壁／自機／他の戦車と重なる。
+  // 移動型の敵が進めない位置か：壁／全プレイヤー／他の敵と重なる。
   private moverBlocked(px: number, py: number, self: Enemy): boolean {
     const rs = this.er(self);
     if (circleHitsSolid(this.stage, px, py, rs)) return true;
-    if (this.dist(px, py, this.pos.x, this.pos.y) < rs + TANK_RADIUS) return true;
+    // 全生存プレイヤー（Co-op はホスト機＋ゲスト機すべて）を避ける（中8-b）。
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      if (this.dist(px, py, p.pos.x, p.pos.y) < rs + TANK_RADIUS) return true;
+    }
     if (this.enemies.some((o) => o !== self && this.dist(px, py, o.x, o.y) < rs + this.er(o))) return true;
     // 自分が置いた地雷の爆風圏には踏み込まない（外へ離れる方向は許可）
     for (const m of this.mines) {
@@ -1953,6 +1960,38 @@ export class Game {
       if (dx * dx + dy * dy < minDist * minDist) return true;
     }
     return false;
+  }
+
+  // 味方同士の押し出し（中8-e）：重なった生存プレイヤー対を法線方向へ均等に離す。
+  // 移動はブロックしないため（体当たりで進める）、移動後にここで重なりを解消する。
+  // 押し出し先が壁なら壁ずり（slide）でめり込ませない。数回反復して収束させる。
+  // 死亡/待機中の味方は対象外。ソロは1人のため何もしない。
+  private separatePlayers(): void {
+    const alive = this.players.filter((p) => p.alive);
+    if (alive.length < 2) return;
+    const min = TANK_RADIUS + TANK_RADIUS;
+    const wall = (px: number, py: number): boolean => circleHitsSolid(this.stage, px, py, TANK_RADIUS);
+    for (let iter = 0; iter < SEPARATE_ITERS; iter++) {
+      let moved = false;
+      for (let i = 0; i < alive.length; i++) {
+        for (let j = i + 1; j < alive.length; j++) {
+          const a = alive[i];
+          const b = alive[j];
+          let dx = b.pos.x - a.pos.x;
+          let dy = b.pos.y - a.pos.y;
+          let d = Math.hypot(dx, dy);
+          if (d >= min) continue;
+          if (d < 1e-3) { dx = Math.cos(a.heading + Math.PI); dy = Math.sin(a.heading + Math.PI); d = 1; } // 完全重なりは適当な向きへ
+          const nx = dx / d;
+          const ny = dy / d;
+          const push = (min - d) / 2 + 0.01; // 各自が半分ずつ離れる（微小マージンで接触時の振動を防ぐ）
+          a.pos = slide(a.pos.x, a.pos.y, a.pos.x - nx * push, a.pos.y - ny * push, wall);
+          b.pos = slide(b.pos.x, b.pos.y, b.pos.x + nx * push, b.pos.y + ny * push, wall);
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
   }
 
   private near(ax: number, ay: number, bx: number, by: number): boolean {
